@@ -150,6 +150,7 @@ class AppConfig:
     ipo_feeds: list[str]
     ipo_calendar_sources: list[str]
     ipo_manual_csv_path: Path
+    disable_nasdaq_ipo_source: bool
     enable_price_confirmation: bool
     price_check_interval_seconds: int
     alert_final_score_min: int
@@ -211,10 +212,11 @@ def load_config() -> AppConfig:
     }
     ir_feeds = watchlist.get("investor_relations_feeds", [])
     ipo_feeds = watchlist.get("ipo_feeds", DEFAULT_IPO_FEEDS)
+    disable_nasdaq_ipo_source = _get_bool("DISABLE_NASDAQ_IPO_SOURCE", False)
     ipo_calendar_sources = [
         source.strip().lower()
         for source in os.getenv("IPO_CALENDAR_SOURCES", "nasdaq_api,stockanalysis_csv,manual_csv").split(",")
-        if source.strip()
+        if source.strip() and not (disable_nasdaq_ipo_source and source.strip().lower() == "nasdaq_api")
     ]
     forms_to_track = [
         form.strip().upper()
@@ -266,6 +268,7 @@ def load_config() -> AppConfig:
         ipo_feeds=ipo_feeds,
         ipo_calendar_sources=ipo_calendar_sources,
         ipo_manual_csv_path=Path(os.getenv("IPO_MANUAL_CSV_PATH", ROOT_DIR / "config" / "ipo_calendar.csv")),
+        disable_nasdaq_ipo_source=disable_nasdaq_ipo_source,
         enable_price_confirmation=_get_bool("ENABLE_PRICE_CONFIRMATION", True),
         price_check_interval_seconds=_get_int("PRICE_CHECK_INTERVAL_SECONDS", 300),
         alert_final_score_min=_get_int("ALERT_FINAL_SCORE_MIN", 80),

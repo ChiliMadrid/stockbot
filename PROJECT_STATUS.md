@@ -16,6 +16,7 @@
 - Added SEC filing text extraction and primary-source summary generation.
 - Added IPO monitoring with configurable IPO feeds, S-1 candidates, Stooq price checks, email alerts, and daily report output.
 - Added robust IPO calendar ingestion with Nasdaq API, StockAnalysis best-effort parsing, and manual CSV fallback.
+- Made IPO calendar health checks source-by-source and less noisy when fallback sources are available.
 - Added diagnostics and health checks through `health_check.py` and `python main.py --health`.
 - Added price/volume confirmation, final signal scoring, alert performance tracking, email watchlist commands, and upgraded morning brief sections.
 - Added broker-free dashboard exports with offline HTML and CSV files under `reports/dashboard/`.
@@ -40,6 +41,7 @@
 - SEC filing summaries with extracted text paths, key points, risks, action, and confidence.
 - IPO watchlist rows with prediction summaries, scores, risks, and price checks.
 - IPO source quality tracking, dedupe by ticker/company/date, and missing price warnings in reports.
+- IPO health checks can skip Nasdaq with `DISABLE_NASDAQ_IPO_SOURCE=true` and fail only when all enabled IPO calendar sources fail.
 - Health checks for env loading, email config, Ollama, SQLite, RSS, SEC, IPO sources, and runtime directories.
 - Final signal scoring with `model_confidence + source_score + price_volume_score - risk_penalty`.
 - Alert outcome tracking for 1h, 4h, 1d, and 5d horizons.

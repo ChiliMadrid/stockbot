@@ -136,32 +136,44 @@ def _check_ipo_sources(config) -> HealthResult:
     if not config.ipo_calendar_sources:
         return HealthResult("WARN", "IPO calendar", "No IPO calendar sources configured")
 
-    warnings = []
+    source_results = []
     passes = 0
     for source in config.ipo_calendar_sources:
         if source == "manual_csv":
             if config.ipo_manual_csv_path.exists():
                 passes += 1
+                source_results.append("manual_csv=PASS")
             else:
-                warnings.append("manual_csv file missing")
+                source_results.append("manual_csv=FAIL file missing")
         elif source == "nasdaq_api":
+            if getattr(config, "disable_nasdaq_ipo_source", False):
+                source_results.append("nasdaq_api=SKIP disabled")
+                continue
             if _url_reachable("https://api.nasdaq.com/api/ipo/calendar"):
                 passes += 1
+                source_results.append("nasdaq_api=PASS")
             else:
-                warnings.append("nasdaq_api unreachable")
+                source_results.append("nasdaq_api=FAIL unreachable")
         elif source == "stockanalysis_csv":
             if _url_reachable("https://stockanalysis.com/ipos/calendar/"):
                 passes += 1
+                source_results.append("stockanalysis_csv=PASS")
             else:
-                warnings.append("stockanalysis_csv unreachable")
+                source_results.append("stockanalysis_csv=FAIL unreachable")
         else:
-            warnings.append(f"unknown source {source}")
+            source_results.append(f"{source}=FAIL unknown source")
 
-    if passes and not warnings:
-        return HealthResult("PASS", "IPO calendar", "Configured IPO calendar sources are reachable")
+    details = "; ".join(source_results)
+    failures = len([result for result in source_results if "=FAIL" in result])
+    if passes and failures == 0:
+        return HealthResult("PASS", "IPO calendar", f"Configured IPO calendar sources are usable: {details}")
     if passes:
-        return HealthResult("WARN", "IPO calendar", f"Some sources passed; issues: {', '.join(warnings)}")
-    return HealthResult("WARN", "IPO calendar", f"No configured source passed: {', '.join(warnings)}")
+        return HealthResult(
+            "WARN",
+            "IPO calendar",
+            f"At least one IPO source passed, so the system can continue. Source status: {details}",
+        )
+    return HealthResult("FAIL", "IPO calendar", f"All enabled IPO calendar sources failed. Source status: {details}")
 
 
 def _check_runtime_dirs(config) -> HealthResult:

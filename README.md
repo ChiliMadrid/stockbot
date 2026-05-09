@@ -347,10 +347,13 @@ IPO_LOOKAHEAD_DAYS=30
 IPO_ALERT_MIN_SCORE=70
 MARKET_DATA_PROVIDER=stooq
 IPO_CALENDAR_SOURCES=nasdaq_api,stockanalysis_csv,manual_csv
+DISABLE_NASDAQ_IPO_SOURCE=false
 IPO_MANUAL_CSV_PATH=config/ipo_calendar.csv
 ```
 
 StockBot loads IPOs from multiple structured or best-effort calendar sources. Source failures are logged and do not stop the app.
+
+Health checks report IPO source status source-by-source. If one IPO source passes, StockBot shows a warning for failed optional sources but can continue. If every enabled IPO source fails, the health check fails. Set `DISABLE_NASDAQ_IPO_SOURCE=true` to skip Nasdaq checks entirely when that public endpoint is noisy or blocked.
 
 Supported `IPO_CALENDAR_SOURCES` values:
 
