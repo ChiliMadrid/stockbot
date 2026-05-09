@@ -112,6 +112,14 @@ MORNING_BRIEF_MODE=true
 ENABLE_DASHBOARD_EXPORT=true
 DASHBOARD_EXPORT_INTERVAL_SECONDS=1800
 DASHBOARD_INCLUDE_CHARTS=true
+ENABLE_DASHBOARD_AUTO_REFRESH=true
+DASHBOARD_AUTO_REFRESH_SECONDS=300
+
+ENABLE_TRAY_APP=false
+
+ENABLE_BACKUPS=true
+BACKUP_INTERVAL_HOURS=24
+BACKUP_KEEP_DAYS=14
 ```
 
 You can also set values directly in Windows PowerShell:
@@ -132,6 +140,8 @@ $env:ENABLE_SEC_TEXT_EXTRACTION="true"
 $env:ENABLE_IPO_MONITOR="true"
 $env:ENABLE_DASHBOARD_EXPORT="true"
 $env:DASHBOARD_INCLUDE_CHARTS="true"
+$env:ENABLE_DASHBOARD_AUTO_REFRESH="true"
+$env:ENABLE_BACKUPS="true"
 ```
 
 ## Run
@@ -215,6 +225,8 @@ StockBot can export a broker-free local dashboard on a schedule. It writes offli
 ENABLE_DASHBOARD_EXPORT=true
 DASHBOARD_EXPORT_INTERVAL_SECONDS=1800
 DASHBOARD_INCLUDE_CHARTS=true
+ENABLE_DASHBOARD_AUTO_REFRESH=true
+DASHBOARD_AUTO_REFRESH_SECONDS=300
 ```
 
 Generated files:
@@ -228,7 +240,7 @@ reports/dashboard/signal_performance.csv
 reports/dashboard/dashboard_summary.json
 ```
 
-The HTML dashboard uses a simple dark theme, table sections, and inline offline charts. Charts include final signal score trend, signal count by ticker, action counts, price/volume confirmation summary, alert performance summary, IPO status counts, and SEC filing form counts. Set `DASHBOARD_INCLUDE_CHARTS=false` to keep the HTML tables-only.
+The HTML dashboard uses a simple dark theme, table sections, inline offline charts, optional browser auto-refresh, and the latest bot status from `logs/stockbot_status.json`. Charts include final signal score trend, signal count by ticker, action counts, price/volume confirmation summary, alert performance summary, IPO status counts, and SEC filing form counts. Set `DASHBOARD_INCLUDE_CHARTS=false` to keep the HTML tables-only, or `ENABLE_DASHBOARD_AUTO_REFRESH=false` to disable meta refresh.
 
 For simple email support, `EmailClient.send_dashboard_link()` can send the local dashboard path to `EMAIL_TO`; attachments are not required for the default workflow.
 
@@ -243,6 +255,38 @@ Test through the Python API:
 
 ```powershell
 python -c "from config import load_config; from dashboard_exporter import export_dashboard; c=load_config(); print(export_dashboard(c)['dashboard_latest'])"
+```
+
+## Tray Controls
+
+`tray_app.py` provides optional local controls. It can open the dashboard, run health checks, export the dashboard, pause/resume monitoring, open the logs folder, and quit the tray app. The main bot reads `logs/stockbot_pause.flag`, so pausing does not require editing `.env`.
+
+```text
+ENABLE_TRAY_APP=false
+```
+
+Run manually:
+
+```powershell
+python tray_app.py
+```
+
+If `pystray` and `Pillow` are not installed, it falls back to a console menu instead of crashing.
+
+## Backups
+
+StockBot can back up the SQLite database, `config/watchlist.json`, and generated reports to `backups/YYYY-MM-DD/HHMMSS/`. It does not copy `.env`, logs, `.git`, or `.venv`.
+
+```text
+ENABLE_BACKUPS=true
+BACKUP_INTERVAL_HOURS=24
+BACKUP_KEEP_DAYS=14
+```
+
+Run a manual backup:
+
+```powershell
+python backup_manager.py
 ```
 
 ## SEC EDGAR And Investor Relations

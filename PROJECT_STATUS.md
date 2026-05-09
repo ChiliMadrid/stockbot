@@ -20,6 +20,9 @@
 - Added price/volume confirmation, final signal scoring, alert performance tracking, email watchlist commands, and upgraded morning brief sections.
 - Added broker-free dashboard exports with offline HTML and CSV files under `reports/dashboard/`.
 - Added offline dashboard charts and `dashboard_summary.json`.
+- Added optional local tray/status controls with pause/resume support.
+- Added dashboard auto-refresh and status display.
+- Added local backup/export utilities for SQLite, watchlist config, and reports.
 
 ## Current Implemented Features
 
@@ -42,6 +45,9 @@
 - Email commands for showing/updating tickers and categories.
 - Scheduled dashboard export for watchlists, latest signals, final scores, price/volume confirmations, IPOs, SEC/IR updates, signal performance, and top risks.
 - Static dashboard charts for score trend, ticker counts, action counts, price/volume summary, alert performance, IPO statuses, and SEC filing forms.
+- Optional tray controls with graceful console fallback when tray dependencies are unavailable.
+- File-based pause/resume control using `logs/stockbot_pause.flag`.
+- Scheduled and manual backups under `backups/YYYY-MM-DD/`.
 - Continuous Windows-compatible main loop with Ctrl+C shutdown.
 
 ## How To Test Email Sending
@@ -135,6 +141,20 @@ start reports\dashboard\dashboard_latest.html
 python -c "from config import load_config; from dashboard_exporter import export_dashboard; c=load_config(); print(export_dashboard(c)['dashboard_latest'])"
 ```
 
+## How To Test Tray Controls
+
+```powershell
+python tray_app.py
+```
+
+If tray dependencies are missing, the command opens a console fallback menu.
+
+## How To Test Backups
+
+```powershell
+python backup_manager.py
+```
+
 Manual CSV ingestion:
 
 ```powershell
@@ -166,8 +186,9 @@ For the full monitor path, make sure Ollama is running and `ENABLE_IPO_MONITOR=t
 - Investor-relations feeds must be configured manually in `config/watchlist.json`.
 - IPO calendar sources are best-effort; public pages/APIs can change shape or block automated requests.
 - Stooq price checks are lightweight and may not cover every suffix, future, or newly listed symbol.
-- Dashboard exports are static local files and do not auto-refresh in an open browser tab.
+- Dashboard auto-refresh uses a static meta refresh, not live push updates.
+- Tray icon mode requires optional `pystray` and `Pillow`; otherwise the console fallback is used.
 
 ## Next Recommended Step
 
-Add local desktop tray/status controls.
+Add optional local web dashboard server.

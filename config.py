@@ -160,6 +160,15 @@ class AppConfig:
     dashboard_export_interval_seconds: int
     dashboard_dir: Path
     dashboard_include_charts: bool
+    enable_dashboard_auto_refresh: bool
+    dashboard_auto_refresh_seconds: int
+    enable_tray_app: bool
+    bot_status_file: Path
+    bot_pause_file: Path
+    enable_backups: bool
+    backup_interval_hours: int
+    backup_keep_days: int
+    backups_dir: Path
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -267,6 +276,15 @@ def load_config() -> AppConfig:
         dashboard_export_interval_seconds=_get_int("DASHBOARD_EXPORT_INTERVAL_SECONDS", 1800),
         dashboard_dir=Path(os.getenv("STOCKBOT_DASHBOARD_DIR", ROOT_DIR / "reports" / "dashboard")),
         dashboard_include_charts=_get_bool("DASHBOARD_INCLUDE_CHARTS", True),
+        enable_dashboard_auto_refresh=_get_bool("ENABLE_DASHBOARD_AUTO_REFRESH", True),
+        dashboard_auto_refresh_seconds=_get_int("DASHBOARD_AUTO_REFRESH_SECONDS", 300),
+        enable_tray_app=_get_bool("ENABLE_TRAY_APP", False),
+        bot_status_file=Path(os.getenv("STOCKBOT_STATUS_FILE", ROOT_DIR / "logs" / "stockbot_status.json")),
+        bot_pause_file=Path(os.getenv("STOCKBOT_PAUSE_FILE", ROOT_DIR / "logs" / "stockbot_pause.flag")),
+        enable_backups=_get_bool("ENABLE_BACKUPS", True),
+        backup_interval_hours=_get_int("BACKUP_INTERVAL_HOURS", 24),
+        backup_keep_days=_get_int("BACKUP_KEEP_DAYS", 14),
+        backups_dir=Path(os.getenv("STOCKBOT_BACKUPS_DIR", ROOT_DIR / "backups")),
     )
 
 

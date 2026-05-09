@@ -6,6 +6,9 @@ __pycache__/
 database/*.sqlite
 database/*.sqlite3
 logs/*.log
+logs/*.json
+logs/*.flag
+backups/
 reports/*.txt
 reports/*.md
 reports/sec_filings/*.txt

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import logging
 import time
 from datetime import datetime
 
+from backup_manager import BackupManager
 from config import AppConfig, load_config
 from dashboard_exporter import export_dashboard
 from database import (
@@ -36,6 +38,26 @@ from sec_edgar_client import SECEdgarClient
 from sec_filing_parser import SECFilingParser
 from signal_scoring import build_price_confirmation, final_signal_score
 from utils import configure_logging, should_send_signal_alert
+
+
+def write_bot_status(config: AppConfig, status: str, message: str = "") -> None:
+    """Write a small status file for the tray app and dashboard."""
+    payload = {
+        "status": status,
+        "message": message,
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+        "paused": config.bot_pause_file.exists(),
+    }
+    try:
+        config.bot_status_file.parent.mkdir(parents=True, exist_ok=True)
+        config.bot_status_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except OSError:
+        logging.getLogger(__name__).debug("Could not write bot status file", exc_info=True)
+
+
+def is_monitoring_paused(config: AppConfig) -> bool:
+    """Return True when the tray pause flag exists."""
+    return config.bot_pause_file.exists()
 
 
 def run_health_mode() -> int:
@@ -325,6 +347,12 @@ def check_dashboard_export(config: AppConfig) -> None:
     log_run_event(config.database_path, "dashboard_export_finished", f"Dashboard saved to {paths['dashboard_latest']}")
 
 
+def check_backups(config: AppConfig, backup_manager: BackupManager) -> None:
+    """Run scheduled local backups."""
+    backup_path = backup_manager.run_backup()
+    log_run_event(config.database_path, "backup_created", f"Backup saved to {backup_path}")
+
+
 def main() -> None:
     """Run StockBot until interrupted."""
     config = load_config()
@@ -351,6 +379,7 @@ def main() -> None:
         timeout_seconds=config.http_timeout_seconds,
     )
     performance_tracker = PerformanceTracker(config, market_data)
+    backup_manager = BackupManager(config)
     ipo_monitor = IPOMonitor(config, ollama, market_data, emailer)
     sec_client = SECEdgarClient(config)
     sec_parser = SECFilingParser(
@@ -369,50 +398,59 @@ def main() -> None:
     next_ipo_check = 0.0
     next_performance_check = 0.0
     next_dashboard_export = 0.0
+    next_backup_check = 0.0
 
     logger.info("StockBot running. Press Ctrl+C to stop.")
+    write_bot_status(config, "running", "StockBot started")
 
     try:
         while True:
             now = time.monotonic()
+            paused = is_monitoring_paused(config)
+            write_bot_status(config, "paused" if paused else "running", "Monitoring paused" if paused else "Monitoring active")
 
-            if now >= next_news_check:
+            if not paused and now >= next_news_check:
                 try:
                     check_news(config, rss_monitor, ollama, emailer, market_data)
                 except Exception:
                     logger.exception("News check failed")
+                    write_bot_status(config, "error", "News check failed")
                     log_run_event(config.database_path, "news_check_error", "News check failed")
                 next_news_check = now + config.news_check_interval_seconds
 
-            if config.enable_inbox_monitor and now >= next_email_check:
+            if not paused and config.enable_inbox_monitor and now >= next_email_check:
                 try:
                     inbox_monitor.check_inbox()
                 except Exception:
                     logger.exception("Inbox check failed")
+                    write_bot_status(config, "error", "Inbox check failed")
                     log_run_event(config.database_path, "inbox_check_error", "Inbox check failed")
                 next_email_check = now + config.email_check_interval_seconds
 
-            if config.enable_sec_monitor and now >= next_sec_check:
+            if not paused and config.enable_sec_monitor and now >= next_sec_check:
                 try:
                     check_sec_and_ir(config, sec_client, sec_parser, ir_monitor, ollama, emailer, market_data)
                 except Exception:
                     logger.exception("SEC/IR check failed")
+                    write_bot_status(config, "error", "SEC/IR check failed")
                     log_run_event(config.database_path, "sec_check_error", "SEC/IR check failed")
                 next_sec_check = now + config.sec_check_interval_seconds
 
-            if config.enable_ipo_monitor and now >= next_ipo_check:
+            if not paused and config.enable_ipo_monitor and now >= next_ipo_check:
                 try:
                     check_ipos(config, ipo_monitor)
                 except Exception:
                     logger.exception("IPO check failed")
+                    write_bot_status(config, "error", "IPO check failed")
                     log_run_event(config.database_path, "ipo_check_error", "IPO check failed")
                 next_ipo_check = now + config.ipo_check_interval_seconds
 
-            if config.enable_performance_tracking and now >= next_performance_check:
+            if not paused and config.enable_performance_tracking and now >= next_performance_check:
                 try:
                     check_performance(config, performance_tracker)
                 except Exception:
                     logger.exception("Performance tracking failed")
+                    write_bot_status(config, "error", "Performance tracking failed")
                     log_run_event(config.database_path, "performance_error", "Performance tracking failed")
                 next_performance_check = now + config.performance_check_interval_seconds
 
@@ -421,19 +459,32 @@ def main() -> None:
                     check_dashboard_export(config)
                 except Exception:
                     logger.exception("Dashboard export failed")
+                    write_bot_status(config, "error", "Dashboard export failed")
                     log_run_event(config.database_path, "dashboard_export_error", "Dashboard export failed")
                 next_dashboard_export = now + config.dashboard_export_interval_seconds
 
-            try:
-                check_daily_report(config, ollama, emailer)
-            except Exception:
-                logger.exception("Daily report generation failed")
-                log_run_event(config.database_path, "daily_report_error", "Daily report generation failed")
+            if config.enable_backups and now >= next_backup_check:
+                try:
+                    check_backups(config, backup_manager)
+                except Exception:
+                    logger.exception("Backup failed")
+                    write_bot_status(config, "error", "Backup failed")
+                    log_run_event(config.database_path, "backup_error", "Backup failed")
+                next_backup_check = now + max(config.backup_interval_hours, 1) * 3600
+
+            if not paused:
+                try:
+                    check_daily_report(config, ollama, emailer)
+                except Exception:
+                    logger.exception("Daily report generation failed")
+                    write_bot_status(config, "error", "Daily report generation failed")
+                    log_run_event(config.database_path, "daily_report_error", "Daily report generation failed")
 
             time.sleep(1)
     except KeyboardInterrupt:
         logger.info("Shutdown requested by user")
         log_run_event(config.database_path, "shutdown", "StockBot stopped by user")
+        write_bot_status(config, "stopped", "StockBot stopped by user")
 
 
 if __name__ == "__main__":

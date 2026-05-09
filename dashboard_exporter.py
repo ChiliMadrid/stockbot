@@ -41,6 +41,7 @@ def export_dashboard(config: AppConfig | None = None) -> dict[str, Path]:
     watchlist = build_watchlist_summary(config, signals)
     risks = build_top_risks(signals, sec_filings, ipos)
     summary = build_dashboard_summary(signals, price_confirmations, ipos, sec_filings, performance)
+    bot_status = read_bot_status(config)
 
     paths = {
         "watchlist_summary": config.dashboard_dir / "watchlist_summary.csv",
@@ -67,6 +68,9 @@ def export_dashboard(config: AppConfig | None = None) -> dict[str, Path]:
         risks,
         summary,
         config.dashboard_include_charts,
+        bot_status,
+        config.enable_dashboard_auto_refresh,
+        config.dashboard_auto_refresh_seconds,
     )
 
     log_run_event(config.database_path, "dashboard_exported", f"Dashboard exported to {paths['dashboard_latest']}")
@@ -92,6 +96,26 @@ def build_dashboard_summary(
         "ipo_status_counts": _count_by(ipos, "status"),
         "sec_filing_form_counts": _count_by(sec_filings, "form"),
     }
+
+
+def read_bot_status(config: AppConfig) -> dict[str, Any]:
+    """Read the optional runtime status file for dashboard display."""
+    if not config.bot_status_file.exists():
+        return {
+            "status": "unknown",
+            "message": "Status file has not been written yet.",
+            "updated_at": "",
+            "paused": False,
+        }
+    try:
+        return json.loads(config.bot_status_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {
+            "status": "error",
+            "message": "Status file could not be read.",
+            "updated_at": "",
+            "paused": False,
+        }
 
 
 def build_watchlist_summary(config: AppConfig, signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -385,10 +409,21 @@ def _write_html(
     risks: list[dict[str, Any]],
     summary: dict[str, Any],
     include_charts: bool,
+    bot_status: dict[str, Any],
+    enable_auto_refresh: bool,
+    auto_refresh_seconds: int,
 ) -> None:
     """Write the offline HTML dashboard."""
     generated_at = datetime.now().isoformat(timespec="seconds")
     charts = _charts_section(summary) if include_charts else ""
+    refresh_tag = (
+        f'  <meta http-equiv="refresh" content="{max(int(auto_refresh_seconds), 30)}">\n'
+        if enable_auto_refresh
+        else ""
+    )
+    status_label = str(bot_status.get("status") or "unknown")
+    status_message = str(bot_status.get("message") or "")
+    status_updated = str(bot_status.get("updated_at") or "")
     body = "\n".join(
         [
             charts,
@@ -407,6 +442,7 @@ def _write_html(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+{refresh_tag}  <meta name="generator" content="StockBot local dashboard">
   <title>StockBot Dashboard</title>
   <style>
     :root {{
@@ -448,6 +484,22 @@ def _write_html(
     .meta {{
       margin-top: 6px;
       color: var(--muted);
+    }}
+    .status-line {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+      color: var(--muted);
+    }}
+    .status-pill {{
+      display: inline-block;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--accent);
+      padding: 4px 8px;
+      font-size: 12px;
+      text-transform: uppercase;
     }}
     table {{
       width: 100%;
@@ -530,6 +582,12 @@ def _write_html(
   <main>
     <h1>StockBot Dashboard</h1>
     <div class="meta">Generated {html.escape(generated_at)}. Broker-free local export. Decision-support only, not financial advice.</div>
+    <div class="status-line">
+      <span class="status-pill">{html.escape(status_label)}</span>
+      <span>{html.escape(status_message)}</span>
+      <span>Last status update: {html.escape(status_updated or "unknown")}</span>
+      <span>Auto-refresh: {html.escape(str(max(int(auto_refresh_seconds), 30)) + "s" if enable_auto_refresh else "off")}</span>
+    </div>
     {body}
   </main>
 </body>
