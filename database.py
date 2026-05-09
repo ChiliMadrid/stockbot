@@ -64,10 +64,19 @@ CREATE TABLE IF NOT EXISTS chatbot_conversations (
     FOREIGN KEY(email_message_id) REFERENCES email_messages(id)
 );
 
+CREATE TABLE IF NOT EXISTS daily_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_date TEXT NOT NULL UNIQUE,
+    report_path TEXT NOT NULL,
+    emailed INTEGER DEFAULT 0,
+    generated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_articles_url ON articles(url);
 CREATE INDEX IF NOT EXISTS idx_signals_confidence ON signals(confidence);
 CREATE INDEX IF NOT EXISTS idx_email_messages_created_at ON email_messages(created_at);
 CREATE INDEX IF NOT EXISTS idx_chatbot_conversations_created_at ON chatbot_conversations(created_at);
+CREATE INDEX IF NOT EXISTS idx_daily_reports_report_date ON daily_reports(report_date);
 """
 
 
@@ -217,6 +226,88 @@ def mark_email_processed(database_path: Path, email_message_id: int) -> None:
             (email_message_id,),
         )
         connection.commit()
+
+
+def get_recent_signals(database_path: Path, lookback_hours: int, min_confidence: int) -> list[dict]:
+    """Return recent signals with article metadata for daily reports."""
+    sql = """
+    SELECT
+        signals.id,
+        articles.id,
+        articles.headline,
+        articles.url,
+        articles.source,
+        articles.published_at,
+        articles.matched_symbol,
+        articles.matched_category,
+        articles.created_at,
+        signals.sentiment,
+        signals.confidence,
+        signals.action,
+        signals.urgency,
+        signals.reason,
+        signals.risk_warning,
+        signals.raw_model_response,
+        signals.created_at
+    FROM signals
+    JOIN articles ON articles.id = signals.article_id
+    WHERE signals.confidence >= ?
+      AND datetime(signals.created_at) >= datetime('now', ?)
+    ORDER BY signals.confidence DESC, signals.created_at DESC;
+    """
+    lookback = f"-{int(lookback_hours)} hours"
+    with sqlite3.connect(database_path) as connection:
+        rows = connection.execute(sql, (int(min_confidence), lookback)).fetchall()
+
+    keys = [
+        "signal_id",
+        "article_id",
+        "headline",
+        "url",
+        "source",
+        "published_at",
+        "matched_symbol",
+        "matched_category",
+        "article_created_at",
+        "sentiment",
+        "confidence",
+        "action",
+        "urgency",
+        "reason",
+        "risk_warning",
+        "raw_model_response",
+        "signal_created_at",
+    ]
+    return [dict(zip(keys, row)) for row in rows]
+
+
+def save_daily_report_record(database_path: Path, report_date: str, report_path: str, emailed: bool) -> int:
+    """Save or update a daily report record."""
+    sql = """
+    INSERT INTO daily_reports (report_date, report_path, emailed)
+    VALUES (?, ?, ?)
+    ON CONFLICT(report_date) DO UPDATE SET
+        report_path = excluded.report_path,
+        emailed = excluded.emailed,
+        generated_at = CURRENT_TIMESTAMP;
+    """
+    with sqlite3.connect(database_path) as connection:
+        cursor = connection.execute(sql, (report_date, report_path, 1 if emailed else 0))
+        connection.commit()
+        if cursor.lastrowid:
+            return int(cursor.lastrowid)
+        row = connection.execute("SELECT id FROM daily_reports WHERE report_date = ?", (report_date,)).fetchone()
+        return int(row[0]) if row else 0
+
+
+def daily_report_already_sent(database_path: Path, report_date: str) -> bool:
+    """Return True when the report for a date has already been generated."""
+    with sqlite3.connect(database_path) as connection:
+        row = connection.execute(
+            "SELECT id FROM daily_reports WHERE report_date = ? LIMIT 1;",
+            (report_date,),
+        ).fetchone()
+    return row is not None
 
 
 def get_recent_conversation_context(database_path: Path, limit: int = 10) -> str:

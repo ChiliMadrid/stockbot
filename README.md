@@ -78,6 +78,13 @@ IMAP_PORT=993
 ENABLE_INBOX_MONITOR=true
 EMAIL_CHECK_INTERVAL_SECONDS=120
 NEWS_CHECK_INTERVAL_SECONDS=300
+
+ENABLE_DAILY_REPORT=true
+DAILY_REPORT_HOUR=7
+DAILY_REPORT_MINUTE=30
+DAILY_REPORT_LOOKBACK_HOURS=24
+DAILY_REPORT_MIN_CONFIDENCE=50
+DAILY_REPORT_TO=your_email@gmail.com
 ```
 
 You can also set values directly in Windows PowerShell:
@@ -89,6 +96,9 @@ $env:EMAIL_ADDRESS="your_email@gmail.com"
 $env:EMAIL_APP_PASSWORD="your_gmail_app_password"
 $env:EMAIL_TO="your_email@gmail.com"
 $env:ENABLE_INBOX_MONITOR="true"
+$env:ENABLE_DAILY_REPORT="true"
+$env:DAILY_REPORT_HOUR="7"
+$env:DAILY_REPORT_MINUTE="30"
 ```
 
 ## Run
@@ -114,6 +124,44 @@ Example questions:
 - What were the highest confidence bearish signals?
 
 The chatbot is intentionally cautious. It may suggest a `watch`, `possible setup`, `risk`, or `needs confirmation`, but it should not claim certainty or tell you to buy.
+
+## Daily Reports
+
+StockBot can generate one daily market intelligence report per calendar day. The report reviews recent SQLite signals, groups them by ticker/category, ranks the most important items, adds approximate source verification labels, asks Ollama to write an email-friendly report, saves the report to `reports/`, logs it in SQLite, and emails it.
+
+Default schedule:
+
+```text
+ENABLE_DAILY_REPORT=true
+DAILY_REPORT_HOUR=7
+DAILY_REPORT_MINUTE=30
+DAILY_REPORT_LOOKBACK_HOURS=24
+DAILY_REPORT_MIN_CONFIDENCE=50
+```
+
+If `DAILY_REPORT_TO` is missing, StockBot sends the report to `EMAIL_TO`.
+
+To test the daily report scheduler, set the hour and minute to the current local time or a minute from now, then run:
+
+```powershell
+python main.py
+```
+
+To manually generate a report without waiting for the scheduler, run:
+
+```powershell
+python -c "from config import load_config; from database import initialize_database; from ollama_client import OllamaClient; from report_generator import generate_daily_report; c=load_config(); initialize_database(c.database_path); o=OllamaClient(c.ollama_url, c.ollama_model, c.http_timeout_seconds); r=generate_daily_report(c, o); print(r['report_path'])"
+```
+
+## Source Verification Labels
+
+StockBot assigns source reliability scores and labels:
+
+- `CONFIRMED`: high-quality source, or multiple approximate independent reputable sources.
+- `PARTIALLY_CONFIRMED`: reputable source or multiple approximate independent sources, but still needs confirmation.
+- `RUMOR_OR_UNVERIFIED`: low-source support, unclear source, social/rumor source, or insufficient corroboration.
+
+This version is approximate. It uses source names and simple lowercase keyword overlap between similar headlines for the same ticker/category. It is not a paid news API, not full source tracing, and not true real-time cross-source verification.
 
 ## Troubleshooting
 
@@ -144,6 +192,8 @@ StockBot only sends alerts when:
 
 Also check that `EMAIL_ADDRESS`, `EMAIL_APP_PASSWORD`, and `EMAIL_TO` are set.
 
+Daily reports use `DAILY_REPORT_TO` when present, otherwise `EMAIL_TO`.
+
 ### Bot Replies Going To Spam
 
 Check your spam folder and mark StockBot replies as not spam. If you use a custom domain, make sure SPF, DKIM, and DMARC are configured.
@@ -160,6 +210,12 @@ Logs:
 
 ```text
 logs/stockbot.log
+```
+
+Saved daily reports:
+
+```text
+reports/daily_report_YYYY-MM-DD.txt
 ```
 
 Local secrets in `.env`, SQLite files, and log files are ignored by git.

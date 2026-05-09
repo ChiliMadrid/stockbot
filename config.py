@@ -69,6 +69,13 @@ class AppConfig:
     email_check_interval_seconds: int
     news_check_interval_seconds: int
     http_timeout_seconds: int
+    enable_daily_report: bool
+    daily_report_hour: int
+    daily_report_minute: int
+    daily_report_lookback_hours: int
+    daily_report_min_confidence: int
+    daily_report_to: str | None
+    reports_dir: Path
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -126,4 +133,11 @@ def load_config() -> AppConfig:
         email_check_interval_seconds=_get_int("EMAIL_CHECK_INTERVAL_SECONDS", 120),
         news_check_interval_seconds=_get_int("NEWS_CHECK_INTERVAL_SECONDS", 300),
         http_timeout_seconds=_get_int("STOCKBOT_HTTP_TIMEOUT_SECONDS", 30),
+        enable_daily_report=_get_bool("ENABLE_DAILY_REPORT", True),
+        daily_report_hour=_get_int("DAILY_REPORT_HOUR", 7),
+        daily_report_minute=_get_int("DAILY_REPORT_MINUTE", 30),
+        daily_report_lookback_hours=_get_int("DAILY_REPORT_LOOKBACK_HOURS", 24),
+        daily_report_min_confidence=_get_int("DAILY_REPORT_MIN_CONFIDENCE", 50),
+        daily_report_to=os.getenv("DAILY_REPORT_TO") or os.getenv("EMAIL_TO") or os.getenv("EMAIL_ADDRESS"),
+        reports_dir=Path(os.getenv("STOCKBOT_REPORTS_DIR", ROOT_DIR / "reports")),
     )

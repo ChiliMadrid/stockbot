@@ -16,11 +16,11 @@ class EmailClient:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
         self.logger = logging.getLogger(__name__)
-        self.enabled = bool(config.email_address and config.email_app_password and config.email_to)
+        self.enabled = bool(config.email_address and config.email_app_password)
 
         if not self.enabled:
             self.logger.warning(
-                "Email is disabled. Set EMAIL_ADDRESS, EMAIL_APP_PASSWORD, and EMAIL_TO to enable alerts."
+                "Email is disabled. Set EMAIL_ADDRESS and EMAIL_APP_PASSWORD to enable email delivery."
             )
 
     def send_email(self, subject: str, body: str, to_address: str | None = None) -> bool:
@@ -62,9 +62,10 @@ class EmailClient:
         subject = original_subject if original_subject.lower().startswith("re:") else f"Re: {original_subject}"
         return self.send_email(subject, reply_body, to_address=to_address)
 
-    def send_daily_report(self, report_body: str) -> bool:
+    def send_daily_report(self, report_body: str, subject: str | None = None) -> bool:
         """Send a daily report email."""
-        return self.send_email("StockBot Daily Report", report_body)
+        report_subject = subject or "StockBot Daily Report"
+        return self.send_email(report_subject, report_body, to_address=self.config.daily_report_to)
 
 
 def format_signal_alert_subject(signal: dict) -> str:
@@ -116,8 +117,8 @@ def send_chatbot_reply(original_subject: str, reply_body: str, to_address: str) 
     return EmailClient(load_config()).send_chatbot_reply(original_subject, reply_body, to_address)
 
 
-def send_daily_report(report_body: str) -> bool:
+def send_daily_report(report_body: str, subject: str | None = None) -> bool:
     """Convenience function for sending a daily report."""
     from config import load_config
 
-    return EmailClient(load_config()).send_daily_report(report_body)
+    return EmailClient(load_config()).send_daily_report(report_body, subject)
