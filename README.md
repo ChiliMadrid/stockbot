@@ -108,6 +108,9 @@ ALERT_FINAL_SCORE_MIN=80
 ENABLE_PERFORMANCE_TRACKING=true
 PERFORMANCE_CHECK_INTERVAL_SECONDS=900
 MORNING_BRIEF_MODE=true
+
+ENABLE_DASHBOARD_EXPORT=true
+DASHBOARD_EXPORT_INTERVAL_SECONDS=1800
 ```
 
 You can also set values directly in Windows PowerShell:
@@ -126,6 +129,7 @@ $env:ENABLE_SEC_MONITOR="true"
 $env:SEC_USER_AGENT="StockBot/0.1 contact:madridchili96@gmail.com"
 $env:ENABLE_SEC_TEXT_EXTRACTION="true"
 $env:ENABLE_IPO_MONITOR="true"
+$env:ENABLE_DASHBOARD_EXPORT="true"
 ```
 
 ## Run
@@ -200,6 +204,41 @@ category remove artificial intelligence
 ```
 
 The commands update `config/watchlist.json`, deduplicate values, and normalize tickers to uppercase while preserving suffix/futures forms such as `LUMI.ST` and `SIL=F`.
+
+## Dashboard Exports
+
+StockBot can export a broker-free local dashboard on a schedule. It writes offline CSV and HTML files under `reports/dashboard/` with no external scripts, CDNs, credentials, or broker integration.
+
+```text
+ENABLE_DASHBOARD_EXPORT=true
+DASHBOARD_EXPORT_INTERVAL_SECONDS=1800
+```
+
+Generated files:
+
+```text
+reports/dashboard/dashboard_latest.html
+reports/dashboard/watchlist_summary.csv
+reports/dashboard/signals_latest.csv
+reports/dashboard/ipo_watchlist.csv
+reports/dashboard/signal_performance.csv
+```
+
+The HTML dashboard uses a simple dark theme and table sections for watchlist summary, latest signals, final scores, price/volume confirmations, IPO watchlist, SEC/IR updates, signal performance, and top risks/unverified items.
+
+For simple email support, `EmailClient.send_dashboard_link()` can send the local dashboard path to `EMAIL_TO`; attachments are not required for the default workflow.
+
+Manually export the dashboard:
+
+```powershell
+python dashboard_exporter.py
+```
+
+Test through the Python API:
+
+```powershell
+python -c "from config import load_config; from dashboard_exporter import export_dashboard; c=load_config(); print(export_dashboard(c)['dashboard_latest'])"
+```
 
 ## SEC EDGAR And Investor Relations
 
@@ -462,6 +501,13 @@ Saved daily reports:
 
 ```text
 reports/daily_report_YYYY-MM-DD.txt
+```
+
+Dashboard exports:
+
+```text
+reports/dashboard/dashboard_latest.html
+reports/dashboard/*.csv
 ```
 
 Local secrets in `.env`, SQLite files, and log files are ignored by git.

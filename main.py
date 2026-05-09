@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 
 from config import AppConfig, load_config
+from dashboard_exporter import export_dashboard
 from database import (
     create_signal_outcome_rows,
     initialize_database,
@@ -318,6 +319,12 @@ def check_daily_report(config: AppConfig, ollama: OllamaClient, emailer: EmailCl
     )
 
 
+def check_dashboard_export(config: AppConfig) -> None:
+    """Export the offline dashboard files."""
+    paths = export_dashboard(config)
+    log_run_event(config.database_path, "dashboard_export_finished", f"Dashboard saved to {paths['dashboard_latest']}")
+
+
 def main() -> None:
     """Run StockBot until interrupted."""
     config = load_config()
@@ -361,6 +368,7 @@ def main() -> None:
     next_sec_check = 0.0
     next_ipo_check = 0.0
     next_performance_check = 0.0
+    next_dashboard_export = 0.0
 
     logger.info("StockBot running. Press Ctrl+C to stop.")
 
@@ -407,6 +415,14 @@ def main() -> None:
                     logger.exception("Performance tracking failed")
                     log_run_event(config.database_path, "performance_error", "Performance tracking failed")
                 next_performance_check = now + config.performance_check_interval_seconds
+
+            if config.enable_dashboard_export and now >= next_dashboard_export:
+                try:
+                    check_dashboard_export(config)
+                except Exception:
+                    logger.exception("Dashboard export failed")
+                    log_run_event(config.database_path, "dashboard_export_error", "Dashboard export failed")
+                next_dashboard_export = now + config.dashboard_export_interval_seconds
 
             try:
                 check_daily_report(config, ollama, emailer)

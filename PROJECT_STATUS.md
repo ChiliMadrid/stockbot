@@ -18,6 +18,7 @@
 - Added robust IPO calendar ingestion with Nasdaq API, StockAnalysis best-effort parsing, and manual CSV fallback.
 - Added diagnostics and health checks through `health_check.py` and `python main.py --health`.
 - Added price/volume confirmation, final signal scoring, alert performance tracking, email watchlist commands, and upgraded morning brief sections.
+- Added broker-free dashboard exports with offline HTML and CSV files under `reports/dashboard/`.
 
 ## Current Implemented Features
 
@@ -38,6 +39,7 @@
 - Final signal scoring with `model_confidence + source_score + price_volume_score - risk_penalty`.
 - Alert outcome tracking for 1h, 4h, 1d, and 5d horizons.
 - Email commands for showing/updating tickers and categories.
+- Scheduled dashboard export for watchlists, latest signals, final scores, price/volume confirmations, IPOs, SEC/IR updates, signal performance, and top risks.
 - Continuous Windows-compatible main loop with Ctrl+C shutdown.
 
 ## How To Test Email Sending
@@ -123,6 +125,13 @@ python -c "from config import load_config; from inbox_monitor import InboxMonito
 python -c "from config import load_config; from database import initialize_database, create_signal_outcome_rows, get_due_signal_outcomes; c=load_config(); initialize_database(c.database_path); create_signal_outcome_rows(c.database_path, 1, 'NVDA', 100); print(get_due_signal_outcomes(c.database_path))"
 ```
 
+## How To Test Dashboard Exports
+
+```powershell
+python dashboard_exporter.py
+python -c "from config import load_config; from dashboard_exporter import export_dashboard; c=load_config(); print(export_dashboard(c)['dashboard_latest'])"
+```
+
 Manual CSV ingestion:
 
 ```powershell
@@ -154,7 +163,8 @@ For the full monitor path, make sure Ollama is running and `ENABLE_IPO_MONITOR=t
 - Investor-relations feeds must be configured manually in `config/watchlist.json`.
 - IPO calendar sources are best-effort; public pages/APIs can change shape or block automated requests.
 - Stooq price checks are lightweight and may not cover every suffix, future, or newly listed symbol.
+- Dashboard exports are static local files and do not auto-refresh in an open browser tab.
 
 ## Next Recommended Step
 
-Add broker-free portfolio/watchlist dashboard export.
+Add price/volume visualization and dashboard trend charts without broker integration.

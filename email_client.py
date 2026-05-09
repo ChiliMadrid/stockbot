@@ -68,6 +68,15 @@ class EmailClient:
         report_subject = subject or "StockBot Daily Report"
         return self.send_email(report_subject, report_body, to_address=self.config.daily_report_to)
 
+    def send_dashboard_link(self, dashboard_path: str) -> bool:
+        """Send a lightweight local dashboard path email."""
+        body = (
+            "StockBot dashboard export is ready.\n\n"
+            f"Local file: {dashboard_path}\n\n"
+            "This is a broker-free local export for decision support only, not financial advice."
+        )
+        return self.send_email("StockBot Dashboard Export", body, to_address=self.config.email_to)
+
 
 def format_signal_alert_subject(signal: dict) -> str:
     """Build the required StockBot alert subject."""
@@ -130,3 +139,10 @@ def send_daily_report(report_body: str, subject: str | None = None) -> bool:
     from config import load_config
 
     return EmailClient(load_config()).send_daily_report(report_body, subject)
+
+
+def send_dashboard_link(dashboard_path: str) -> bool:
+    """Convenience function for sending a dashboard path email."""
+    from config import load_config
+
+    return EmailClient(load_config()).send_dashboard_link(dashboard_path)

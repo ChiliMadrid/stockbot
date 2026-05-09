@@ -156,6 +156,9 @@ class AppConfig:
     enable_performance_tracking: bool
     performance_check_interval_seconds: int
     morning_brief_mode: bool
+    enable_dashboard_export: bool
+    dashboard_export_interval_seconds: int
+    dashboard_dir: Path
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -259,6 +262,9 @@ def load_config() -> AppConfig:
         enable_performance_tracking=_get_bool("ENABLE_PERFORMANCE_TRACKING", True),
         performance_check_interval_seconds=_get_int("PERFORMANCE_CHECK_INTERVAL_SECONDS", 900),
         morning_brief_mode=_get_bool("MORNING_BRIEF_MODE", True),
+        enable_dashboard_export=_get_bool("ENABLE_DASHBOARD_EXPORT", True),
+        dashboard_export_interval_seconds=_get_int("DASHBOARD_EXPORT_INTERVAL_SECONDS", 1800),
+        dashboard_dir=Path(os.getenv("STOCKBOT_DASHBOARD_DIR", ROOT_DIR / "reports" / "dashboard")),
     )
 
 

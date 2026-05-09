@@ -9,3 +9,6 @@ logs/*.log
 reports/*.txt
 reports/*.md
 reports/sec_filings/*.txt
+reports/dashboard/*.csv
+reports/dashboard/*.html
+!reports/dashboard/.gitkeep
