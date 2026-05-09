@@ -5,8 +5,11 @@ from __future__ import annotations
 
 PRIMARY_SOURCES = [
     "sec",
+    "sec edgar",
+    "sec filing",
     "investor relations",
     "press release",
+    "company press release",
     "earnings transcript",
 ]
 

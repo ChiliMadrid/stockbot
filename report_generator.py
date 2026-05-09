@@ -8,7 +8,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from database import daily_report_already_sent, get_recent_signals, save_daily_report_record
+from database import daily_report_already_sent, get_recent_sec_filings, get_recent_signals, save_daily_report_record
 from source_verifier import explain_verification, label_verification, score_source
 
 
@@ -76,6 +76,7 @@ def build_report_context(config) -> dict:
         lookback_hours=config.daily_report_lookback_hours,
         min_confidence=config.daily_report_min_confidence,
     )
+    sec_filings = get_recent_sec_filings(config.database_path, config.daily_report_lookback_hours)
 
     enriched = []
     for signal in signals:
@@ -99,6 +100,7 @@ def build_report_context(config) -> dict:
         "lookback_hours": config.daily_report_lookback_hours,
         "min_confidence": config.daily_report_min_confidence,
         "signals": ranked,
+        "primary_source_filings": sec_filings,
         "groups": dict(groups),
         "trending": Counter(_signal_group(signal) for signal in ranked).most_common(10),
         "verification_counts": dict(labels),
@@ -151,6 +153,9 @@ Verification counts: {context["verification_counts"]}
 Signals:
 {signals_text}
 
+Primary-source filings/company updates:
+{_format_primary_sources_for_prompt(context["primary_source_filings"])}
+
 Required sections:
 1. Title: Daily StockBot Market Intelligence Report
 2. Date/time generated
@@ -164,6 +169,9 @@ Required sections:
 10. Risk notes
 11. Source notes
 12. Reminder: "This report is decision-support only, not financial advice."
+
+Also include a short section named:
+Primary-source filings/company updates
 
 Tone rules:
 - Direct and practical.
@@ -192,6 +200,9 @@ def _build_fallback_report(context: dict) -> str:
         "Executive summary",
         f"- Reviewed {len(signals)} signal(s) from the last {context['lookback_hours']} hour(s).",
         "- Treat this as a watchlist and risk-monitoring report, not a trading instruction.",
+        "",
+        "Primary-source filings/company updates",
+        *_format_primary_source_items(context["primary_source_filings"]),
         "",
         "Highest-confidence possible buy watches",
         *_format_section_items(buys),
@@ -235,6 +246,33 @@ def _format_section_items(signals: list[dict]) -> list[str]:
         )
         for signal in signals
     ]
+
+
+def _format_primary_source_items(filings: list[dict]) -> list[str]:
+    """Format SEC filings for fallback reports."""
+    if not filings:
+        return ["- None found in the lookback window."]
+    return [
+        (
+            f"- {filing.get('ticker')} | {filing.get('form')} | filed {filing.get('filing_date')} | "
+            f"CONFIRMED | {filing.get('headline')} | {filing.get('filing_url')}"
+        )
+        for filing in filings[:10]
+    ]
+
+
+def _format_primary_sources_for_prompt(filings: list[dict]) -> str:
+    """Format SEC filings compactly for the report prompt."""
+    if not filings:
+        return "No primary-source filings found."
+    return "\n".join(
+        (
+            f"- ticker={filing.get('ticker')} | form={filing.get('form')} | "
+            f"filing_date={filing.get('filing_date')} | report_date={filing.get('report_date')} | "
+            f"verification=CONFIRMED | headline={filing.get('headline')} | url={filing.get('filing_url')}"
+        )
+        for filing in filings[:20]
+    )
 
 
 def _format_signals_for_prompt(signals: list[dict]) -> str:

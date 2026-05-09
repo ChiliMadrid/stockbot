@@ -30,6 +30,19 @@ DEFAULT_RSS_FEEDS = [
 
 DEFAULT_TICKERS = ["NVDA", "AMD", "TSLA", "MSFT", "AAPL", "PLTR", "SMCI", "GOOGL", "META", "AVGO"]
 
+DEFAULT_SEC_CIK_MAP = {
+    "NVDA": "0001045810",
+    "AMD": "0000002488",
+    "TSLA": "0001318605",
+    "MSFT": "0000789019",
+    "AAPL": "0000320193",
+    "META": "0001326801",
+    "GOOGL": "0001652044",
+    "AVGO": "0001730168",
+    "PLTR": "0001321655",
+    "SMCI": "0001375365",
+}
+
 DEFAULT_CATEGORIES = [
     "artificial intelligence",
     "semiconductor",
@@ -76,6 +89,12 @@ class AppConfig:
     daily_report_min_confidence: int
     daily_report_to: str | None
     reports_dir: Path
+    enable_sec_monitor: bool
+    sec_user_agent: str
+    sec_check_interval_seconds: int
+    sec_forms_to_track: list[str]
+    sec_cik_map: dict[str, str]
+    investor_relations_feeds: list[str]
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -112,6 +131,16 @@ def load_config() -> AppConfig:
     tickers = [ticker.upper() for ticker in watchlist.get("tickers", DEFAULT_TICKERS)]
     categories = [category.lower() for category in watchlist.get("categories", DEFAULT_CATEGORIES)]
     feeds = watchlist.get("rss_feeds", DEFAULT_RSS_FEEDS)
+    sec_cik_map = {
+        str(ticker).upper(): str(cik).zfill(10)
+        for ticker, cik in watchlist.get("sec_cik_map", DEFAULT_SEC_CIK_MAP).items()
+    }
+    ir_feeds = watchlist.get("investor_relations_feeds", [])
+    forms_to_track = [
+        form.strip().upper()
+        for form in os.getenv("SEC_FORMS_TO_TRACK", "8-K,10-Q,10-K,S-1,SC 13G,SC 13D,4").split(",")
+        if form.strip()
+    ]
 
     return AppConfig(
         database_path=Path(os.getenv("STOCKBOT_DATABASE_PATH", ROOT_DIR / "database" / "stockbot.sqlite3")),
@@ -140,4 +169,10 @@ def load_config() -> AppConfig:
         daily_report_min_confidence=_get_int("DAILY_REPORT_MIN_CONFIDENCE", 50),
         daily_report_to=os.getenv("DAILY_REPORT_TO") or os.getenv("EMAIL_TO") or os.getenv("EMAIL_ADDRESS"),
         reports_dir=Path(os.getenv("STOCKBOT_REPORTS_DIR", ROOT_DIR / "reports")),
+        enable_sec_monitor=_get_bool("ENABLE_SEC_MONITOR", True),
+        sec_user_agent=os.getenv("SEC_USER_AGENT", "StockBot/0.1 contact:madridchili96@gmail.com"),
+        sec_check_interval_seconds=_get_int("SEC_CHECK_INTERVAL_SECONDS", 900),
+        sec_forms_to_track=forms_to_track,
+        sec_cik_map=sec_cik_map,
+        investor_relations_feeds=ir_feeds,
     )

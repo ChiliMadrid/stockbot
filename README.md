@@ -85,6 +85,11 @@ DAILY_REPORT_MINUTE=30
 DAILY_REPORT_LOOKBACK_HOURS=24
 DAILY_REPORT_MIN_CONFIDENCE=50
 DAILY_REPORT_TO=your_email@gmail.com
+
+ENABLE_SEC_MONITOR=true
+SEC_USER_AGENT=StockBot/0.1 contact:madridchili96@gmail.com
+SEC_CHECK_INTERVAL_SECONDS=900
+SEC_FORMS_TO_TRACK=8-K,10-Q,10-K,S-1,SC 13G,SC 13D,4
 ```
 
 You can also set values directly in Windows PowerShell:
@@ -99,6 +104,8 @@ $env:ENABLE_INBOX_MONITOR="true"
 $env:ENABLE_DAILY_REPORT="true"
 $env:DAILY_REPORT_HOUR="7"
 $env:DAILY_REPORT_MINUTE="30"
+$env:ENABLE_SEC_MONITOR="true"
+$env:SEC_USER_AGENT="StockBot/0.1 contact:madridchili96@gmail.com"
 ```
 
 ## Run
@@ -108,6 +115,43 @@ python main.py
 ```
 
 The app runs continuously until you press `Ctrl+C`.
+
+## SEC EDGAR And Investor Relations
+
+StockBot can monitor SEC EDGAR company submissions and optional investor-relations RSS feeds as primary-source inputs. SEC and IR items are classified with the same Ollama JSON signal format as news headlines, stored in SQLite, and included in daily reports.
+
+SEC settings:
+
+```text
+ENABLE_SEC_MONITOR=true
+SEC_USER_AGENT=StockBot/0.1 contact:madridchili96@gmail.com
+SEC_CHECK_INTERVAL_SECONDS=900
+SEC_FORMS_TO_TRACK=8-K,10-Q,10-K,S-1,SC 13G,SC 13D,4
+```
+
+The SEC asks API clients to send a descriptive user agent with contact information. Change `SEC_USER_AGENT` to your preferred contact address before running long term.
+
+The watchlist supports `sec_cik_map` and `investor_relations_feeds`:
+
+```json
+{
+  "sec_cik_map": {
+    "NVDA": "0001045810",
+    "AAPL": "0000320193"
+  },
+  "investor_relations_feeds": [
+    "https://investor.nvidia.com/rss/news-releases.xml"
+  ]
+}
+```
+
+SEC filings are tracked by accession number in the `sec_filings` table. New important filings are alerted when model confidence is at least `60`. SEC EDGAR, investor relations, company press releases, and earnings transcripts are treated as primary sources in source verification.
+
+Quick SEC fetch test:
+
+```powershell
+python -c "from config import load_config; from sec_edgar_client import SECEdgarClient; c=load_config(); client=SECEdgarClient(c); print(client.fetch_recent_filings('NVDA')[:3])"
+```
 
 ## Replying To StockBot Emails
 
@@ -128,6 +172,8 @@ The chatbot is intentionally cautious. It may suggest a `watch`, `possible setup
 ## Daily Reports
 
 StockBot can generate one daily market intelligence report per calendar day. The report reviews recent SQLite signals, groups them by ticker/category, ranks the most important items, adds approximate source verification labels, asks Ollama to write an email-friendly report, saves the report to `reports/`, logs it in SQLite, and emails it.
+
+Daily reports include a `Primary-source filings/company updates` section when recent SEC filings or company updates are available.
 
 Default schedule:
 
@@ -204,6 +250,12 @@ SQLite database:
 
 ```text
 database/stockbot.sqlite3
+```
+
+Primary-source SEC filings are stored in:
+
+```text
+sec_filings
 ```
 
 Logs:

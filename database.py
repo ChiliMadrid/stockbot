@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from rss_monitor import Article
+from sec_edgar_client import SECFiling
 
 
 SCHEMA = """
@@ -72,11 +73,28 @@ CREATE TABLE IF NOT EXISTS daily_reports (
     generated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS sec_filings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL,
+    cik TEXT NOT NULL,
+    form TEXT NOT NULL,
+    accession TEXT NOT NULL UNIQUE,
+    filing_date TEXT,
+    report_date TEXT,
+    primary_document TEXT,
+    filing_url TEXT NOT NULL,
+    headline TEXT NOT NULL,
+    processed INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_articles_url ON articles(url);
 CREATE INDEX IF NOT EXISTS idx_signals_confidence ON signals(confidence);
 CREATE INDEX IF NOT EXISTS idx_email_messages_created_at ON email_messages(created_at);
 CREATE INDEX IF NOT EXISTS idx_chatbot_conversations_created_at ON chatbot_conversations(created_at);
 CREATE INDEX IF NOT EXISTS idx_daily_reports_report_date ON daily_reports(report_date);
+CREATE INDEX IF NOT EXISTS idx_sec_filings_accession ON sec_filings(accession);
+CREATE INDEX IF NOT EXISTS idx_sec_filings_created_at ON sec_filings(created_at);
 """
 
 
@@ -153,6 +171,58 @@ def signal_already_exists(database_path: Path, url: str) -> bool:
     """
     with sqlite3.connect(database_path) as connection:
         return connection.execute(sql, (url,)).fetchone() is not None
+
+
+def save_sec_filing(database_path: Path, filing: SECFiling | dict[str, Any]) -> int | None:
+    """Save a SEC filing and return its row ID. Existing accessions are ignored."""
+    data = filing if isinstance(filing, dict) else filing.__dict__
+    sql = """
+    INSERT OR IGNORE INTO sec_filings (
+        ticker, cik, form, accession, filing_date, report_date, primary_document,
+        filing_url, headline, processed, created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    """
+    with sqlite3.connect(database_path) as connection:
+        cursor = connection.execute(
+            sql,
+            (
+                data.get("ticker"),
+                data.get("cik"),
+                data.get("form"),
+                data.get("accession"),
+                data.get("filing_date"),
+                data.get("report_date"),
+                data.get("primary_document"),
+                data.get("filing_url"),
+                data.get("headline"),
+                1 if data.get("processed") else 0,
+                data.get("created_at"),
+            ),
+        )
+        connection.commit()
+        if cursor.lastrowid:
+            return int(cursor.lastrowid)
+        return None
+
+
+def sec_filing_exists(database_path: Path, accession: str) -> bool:
+    """Return True when a SEC accession is already stored."""
+    with sqlite3.connect(database_path) as connection:
+        return (
+            connection.execute(
+                "SELECT id FROM sec_filings WHERE accession = ? LIMIT 1;",
+                (accession,),
+            ).fetchone()
+            is not None
+        )
+
+
+def mark_sec_filing_processed(database_path: Path, accession: str) -> None:
+    """Mark a SEC filing as processed."""
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("UPDATE sec_filings SET processed = 1 WHERE accession = ?;", (accession,))
+        connection.commit()
 
 
 def log_run_event(database_path: Path, event_type: str, message: str) -> None:
@@ -278,6 +348,36 @@ def get_recent_signals(database_path: Path, lookback_hours: int, min_confidence:
         "raw_model_response",
         "signal_created_at",
     ]
+    return [dict(zip(keys, row)) for row in rows]
+
+
+def get_recent_sec_filings(database_path: Path, lookback_hours: int) -> list[dict]:
+    """Return recent SEC filings for daily reports."""
+    sql = """
+    SELECT
+        id, ticker, cik, form, accession, filing_date, report_date,
+        primary_document, filing_url, headline, processed, created_at
+    FROM sec_filings
+    WHERE datetime(created_at) >= datetime('now', ?)
+    ORDER BY filing_date DESC, created_at DESC;
+    """
+    keys = [
+        "id",
+        "ticker",
+        "cik",
+        "form",
+        "accession",
+        "filing_date",
+        "report_date",
+        "primary_document",
+        "filing_url",
+        "headline",
+        "processed",
+        "created_at",
+    ]
+    lookback = f"-{int(lookback_hours)} hours"
+    with sqlite3.connect(database_path) as connection:
+        rows = connection.execute(sql, (lookback,)).fetchall()
     return [dict(zip(keys, row)) for row in rows]
 
 

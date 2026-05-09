@@ -37,5 +37,7 @@
     "PLTR": "0001321655",
     "SMCI": "0001375365"
   },
-  "investor_relations_feeds": []
+  "investor_relations_feeds": [
+    "https://investor.nvidia.com/rss/news-releases.xml"
+  ]
 }
