@@ -16,6 +16,7 @@
 - Added SEC filing text extraction and primary-source summary generation.
 - Added IPO monitoring with configurable IPO feeds, S-1 candidates, Stooq price checks, email alerts, and daily report output.
 - Added robust IPO calendar ingestion with Nasdaq API, StockAnalysis best-effort parsing, and manual CSV fallback.
+- Added diagnostics and health checks through `health_check.py` and `python main.py --health`.
 
 ## Current Implemented Features
 
@@ -32,6 +33,7 @@
 - SEC filing summaries with extracted text paths, key points, risks, action, and confidence.
 - IPO watchlist rows with prediction summaries, scores, risks, and price checks.
 - IPO source quality tracking, dedupe by ticker/company/date, and missing price warnings in reports.
+- Health checks for env loading, email config, Ollama, SQLite, RSS, SEC, IPO sources, and runtime directories.
 - Continuous Windows-compatible main loop with Ctrl+C shutdown.
 
 ## How To Test Email Sending
@@ -72,7 +74,8 @@ To test the live app path, set `ENABLE_SEC_MONITOR=true`, confirm `SEC_USER_AGEN
 Run:
 
 ```powershell
-python -m compileall .
+$files = Get-ChildItem -Path . -Recurse -Filter *.py -File | Where-Object { $_.FullName -notmatch '\\.git\\|\\.venv\\|\\logs\\|\\database\\|\\reports\\' } | ForEach-Object { $_.FullName }
+python -m py_compile @files
 python -c "from config import load_config; from sec_edgar_client import SECEdgarClient; c=load_config(); client=SECEdgarClient(c); f=client.fetch_recent_filings('NVDA')[0]; print(f['filing_url'])"
 ```
 
@@ -83,11 +86,19 @@ For the full summary path, make sure Ollama is running and `ENABLE_SEC_TEXT_EXTR
 Run:
 
 ```powershell
-python -m compileall .
+$files = Get-ChildItem -Path . -Recurse -Filter *.py -File | Where-Object { $_.FullName -notmatch '\\.git\\|\\.venv\\|\\logs\\|\\database\\|\\reports\\' } | ForEach-Object { $_.FullName }
+python -m py_compile @files
 python -c "from config import load_config; c=load_config(); print(c.watchlist_tickers)"
 python -c "from config import load_config; from ipo_calendar_client import IPOCalendarClient; c=load_config(); print(IPOCalendarClient(c).fetch_calendar_items()[:3])"
 python -c "from market_data_client import MarketDataClient; print(MarketDataClient().get_quote('NVDA'))"
 python -c "from config import load_config; from database import initialize_database, get_recent_ipos; c=load_config(); initialize_database(c.database_path); print(get_recent_ipos(c.database_path)[:3])"
+```
+
+## How To Run Health Checks
+
+```powershell
+python health_check.py
+python main.py --health
 ```
 
 Manual CSV ingestion:
@@ -124,4 +135,4 @@ For the full monitor path, make sure Ollama is running and `ENABLE_IPO_MONITOR=t
 
 ## Next Recommended Step
 
-Add robust IPO calendar ingestion from a structured provider or maintained CSV source.
+Add price/volume confirmation and signal scoring.

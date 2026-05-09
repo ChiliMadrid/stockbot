@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import logging
 import time
 from datetime import datetime
@@ -30,6 +31,15 @@ from rss_monitor import Article, RSSMonitor
 from sec_edgar_client import SECEdgarClient
 from sec_filing_parser import SECFilingParser
 from utils import configure_logging, should_send_signal_alert
+
+
+def run_health_mode() -> int:
+    """Run diagnostics and return a process exit code."""
+    from health_check import has_failures, print_health_report, run_health_checks
+
+    results = run_health_checks()
+    print_health_report(results)
+    return 1 if has_failures(results) else 0
 
 
 def check_news(config: AppConfig, rss_monitor: RSSMonitor, ollama: OllamaClient, emailer: EmailClient) -> None:
@@ -373,4 +383,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    if "--health" in sys.argv:
+        raise SystemExit(run_health_mode())
     main()

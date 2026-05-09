@@ -129,6 +129,24 @@ python main.py
 
 The app runs continuously until you press `Ctrl+C`.
 
+## Health Checks
+
+Run diagnostics before leaving StockBot running:
+
+```powershell
+python health_check.py
+python main.py --health
+```
+
+The health check prints `PASS`, `WARN`, and `FAIL` lines for `.env`, email settings, Ollama, SQLite, RSS, SEC, IPO calendar sources, and runtime folders. It does not print secrets.
+
+Filtered Python syntax check:
+
+```powershell
+$files = Get-ChildItem -Path . -Recurse -Filter *.py -File | Where-Object { $_.FullName -notmatch '\\.git\\|\\.venv\\|\\logs\\|\\database\\|\\reports\\' } | ForEach-Object { $_.FullName }
+python -m py_compile @files
+```
+
 ## SEC EDGAR And Investor Relations
 
 StockBot can monitor SEC EDGAR company submissions and optional investor-relations RSS feeds as primary-source inputs. SEC and IR items are classified with the same Ollama JSON signal format as news headlines, stored in SQLite, and included in daily reports.
