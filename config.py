@@ -28,7 +28,46 @@ DEFAULT_RSS_FEEDS = [
     "https://feeds.marketwatch.com/marketwatch/topstories/",
 ]
 
-DEFAULT_TICKERS = ["NVDA", "AMD", "TSLA", "MSFT", "AAPL", "PLTR", "SMCI", "GOOGL", "META", "AVGO"]
+DEFAULT_TICKERS = [
+    "AIP",
+    "PLTR",
+    "INTC",
+    "SMR",
+    "OKLO",
+    "NVDA",
+    "ALAB",
+    "TEM",
+    "STX",
+    "MAGS",
+    "XE",
+    "PSMT",
+    "QCOM",
+    "SMCI",
+    "BE",
+    "LUMI.ST",
+    "AEM",
+    "SPY",
+    "VRT",
+    "KLAC",
+    "ASML",
+    "SOXX",
+    "SMH",
+    "CLS",
+    "VMAV",
+    "GLNG",
+    "FLNG",
+    "LNG",
+    "AMZN",
+    "SIL=F",
+    "ACB",
+    "TSLA",
+    "COST",
+    "META",
+    "ARM",
+    "AMD",
+    "HG=F",
+    "AEP",
+]
 
 DEFAULT_SEC_CIK_MAP = {
     "NVDA": "0001045810",
@@ -56,6 +95,11 @@ DEFAULT_CATEGORIES = [
     "inflation",
     "earnings",
     "guidance",
+]
+
+DEFAULT_IPO_FEEDS = [
+    "https://www.nasdaq.com/market-activity/ipos",
+    "https://www.marketwatch.com/tools/ipo-calendar",
 ]
 
 
@@ -98,6 +142,12 @@ class AppConfig:
     enable_sec_text_extraction: bool
     sec_text_max_chars: int
     sec_summary_min_confidence: int
+    enable_ipo_monitor: bool
+    ipo_check_interval_seconds: int
+    ipo_lookahead_days: int
+    ipo_alert_min_score: int
+    market_data_provider: str
+    ipo_feeds: list[str]
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -131,7 +181,7 @@ def load_config() -> AppConfig:
     watchlist_path = Path(os.getenv("STOCKBOT_WATCHLIST_PATH", DEFAULT_WATCHLIST_PATH))
     watchlist = _read_json(watchlist_path)
 
-    tickers = [ticker.upper() for ticker in watchlist.get("tickers", DEFAULT_TICKERS)]
+    tickers = _normalize_tickers(watchlist.get("tickers", DEFAULT_TICKERS))
     categories = [category.lower() for category in watchlist.get("categories", DEFAULT_CATEGORIES)]
     feeds = watchlist.get("rss_feeds", DEFAULT_RSS_FEEDS)
     sec_cik_map = {
@@ -139,6 +189,7 @@ def load_config() -> AppConfig:
         for ticker, cik in watchlist.get("sec_cik_map", DEFAULT_SEC_CIK_MAP).items()
     }
     ir_feeds = watchlist.get("investor_relations_feeds", [])
+    ipo_feeds = watchlist.get("ipo_feeds", DEFAULT_IPO_FEEDS)
     forms_to_track = [
         form.strip().upper()
         for form in os.getenv("SEC_FORMS_TO_TRACK", "8-K,10-Q,10-K,S-1,SC 13G,SC 13D,4").split(",")
@@ -181,4 +232,23 @@ def load_config() -> AppConfig:
         enable_sec_text_extraction=_get_bool("ENABLE_SEC_TEXT_EXTRACTION", True),
         sec_text_max_chars=_get_int("SEC_TEXT_MAX_CHARS", 12000),
         sec_summary_min_confidence=_get_int("SEC_SUMMARY_MIN_CONFIDENCE", 50),
+        enable_ipo_monitor=_get_bool("ENABLE_IPO_MONITOR", True),
+        ipo_check_interval_seconds=_get_int("IPO_CHECK_INTERVAL_SECONDS", 3600),
+        ipo_lookahead_days=_get_int("IPO_LOOKAHEAD_DAYS", 30),
+        ipo_alert_min_score=_get_int("IPO_ALERT_MIN_SCORE", 70),
+        market_data_provider=os.getenv("MARKET_DATA_PROVIDER", "stooq").lower(),
+        ipo_feeds=ipo_feeds,
     )
+
+
+def _normalize_tickers(tickers: list[str]) -> list[str]:
+    """Deduplicate and normalize tickers while preserving futures/suffix symbols."""
+    normalized = []
+    seen = set()
+    for ticker in tickers:
+        value = str(ticker).strip().upper()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return normalized

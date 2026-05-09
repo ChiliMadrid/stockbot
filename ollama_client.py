@@ -85,6 +85,27 @@ class OllamaClient:
             "reason": signal.get("reason") or summary_text,
         }
 
+    def analyze_ipo(self, ipo: dict[str, Any]) -> dict[str, Any]:
+        """Generate a conservative IPO watchlist prediction."""
+        prompt = self._ipo_prompt(ipo)
+        raw_response = self._generate(prompt, json_mode=True)
+        parsed = self._parse_json_response(raw_response)
+
+        if parsed is None:
+            self.logger.warning("Could not parse IPO JSON response: %s", raw_response)
+            return {
+                "prediction_summary": "IPO prediction unavailable because the model response could not be parsed.",
+                "prediction_score": 0,
+                "expected_direction": "uncertain",
+                "watch_action": "watch",
+                "key_drivers": [],
+                "risks": ["Manual review needed."],
+                "confidence": 0,
+                "raw_model_response": raw_response,
+            }
+
+        return self._normalize_ipo_prediction(parsed, raw_response)
+
     def answer_email_reply(self, user_message: str, recent_context: str) -> str:
         """Ask Ollama to answer a user's email reply with a cautious market tone."""
         prompt = f"""
@@ -178,6 +199,42 @@ Extracted filing text:
 {filing_text}
 """.strip()
 
+    def _ipo_prompt(self, ipo: dict[str, Any]) -> str:
+        """Build the JSON-only IPO prediction prompt."""
+        return f"""
+You are a conservative IPO watchlist analyst. Return only valid JSON.
+
+Allowed JSON shape:
+{{
+  "prediction_summary": "",
+  "prediction_score": 0,
+  "expected_direction": "bullish|bearish|neutral|uncertain",
+  "watch_action": "ignore|watch|high_priority_watch",
+  "key_drivers": [],
+  "risks": [],
+  "confidence": 0
+}}
+
+Rules:
+- Watchlist language only.
+- Do not say "buy" or recommend buying.
+- Use low confidence when data is weak or incomplete.
+- Be conservative with new IPOs and S-1-only candidates.
+- Prediction score is 0 to 100 and should reflect watchlist priority, not guaranteed upside.
+
+IPO candidate:
+Company: {ipo.get("company_name", "")}
+Ticker: {ipo.get("ticker", "")}
+IPO date: {ipo.get("ipo_date", "")}
+Final IPO price: {ipo.get("final_ipo_price", "")}
+Opening price: {ipo.get("opening_price", "")}
+Current price: {ipo.get("current_price", "")}
+Status: {ipo.get("status", "")}
+Source: {ipo.get("source", "")}
+Headline: {ipo.get("headline", "")}
+URL: {ipo.get("source_url", "")}
+""".strip()
+
     def _generate(self, prompt: str, json_mode: bool) -> str:
         """Call Ollama and return the raw text response."""
         payload: dict[str, Any] = {
@@ -256,3 +313,34 @@ Extracted filing text:
         if value in (None, ""):
             return []
         return [str(value)]
+
+    def _normalize_ipo_prediction(self, parsed: dict[str, Any], raw_response: str) -> dict[str, Any]:
+        """Normalize IPO model output."""
+        expected_direction = str(parsed.get("expected_direction", "uncertain")).lower()
+        if expected_direction not in {"bullish", "bearish", "neutral", "uncertain"}:
+            expected_direction = "uncertain"
+
+        watch_action = str(parsed.get("watch_action", "watch")).lower()
+        if watch_action not in {"ignore", "watch", "high_priority_watch"}:
+            watch_action = "watch"
+
+        try:
+            prediction_score = int(parsed.get("prediction_score", 0))
+        except (TypeError, ValueError):
+            prediction_score = 0
+
+        try:
+            confidence = int(parsed.get("confidence", 0))
+        except (TypeError, ValueError):
+            confidence = 0
+
+        return {
+            "prediction_summary": str(parsed.get("prediction_summary", "")),
+            "prediction_score": max(0, min(100, prediction_score)),
+            "expected_direction": expected_direction,
+            "watch_action": watch_action,
+            "key_drivers": self._normalize_list(parsed.get("key_drivers", [])),
+            "risks": self._normalize_list(parsed.get("risks", [])),
+            "confidence": max(0, min(100, confidence)),
+            "raw_model_response": raw_response,
+        }

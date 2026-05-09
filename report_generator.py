@@ -9,7 +9,13 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from database import daily_report_already_sent, get_recent_sec_filings, get_recent_signals, save_daily_report_record
+from database import (
+    daily_report_already_sent,
+    get_recent_ipos,
+    get_recent_sec_filings,
+    get_recent_signals,
+    save_daily_report_record,
+)
 from source_verifier import explain_verification, label_verification, score_source
 
 
@@ -82,6 +88,7 @@ def build_report_context(config) -> dict:
         for filing in get_recent_sec_filings(config.database_path, config.daily_report_lookback_hours)
         if _sec_summary_confidence(filing) >= config.sec_summary_min_confidence or not filing.get("filing_summary")
     ]
+    ipos = get_recent_ipos(config.database_path, lookback_hours=24 * max(config.ipo_lookahead_days, 30))
 
     enriched = []
     for signal in signals:
@@ -106,6 +113,7 @@ def build_report_context(config) -> dict:
         "min_confidence": config.daily_report_min_confidence,
         "signals": ranked,
         "primary_source_filings": sec_filings,
+        "ipos": ipos,
         "groups": dict(groups),
         "trending": Counter(_signal_group(signal) for signal in ranked).most_common(10),
         "verification_counts": dict(labels),
@@ -164,6 +172,9 @@ Primary-source filings/company updates:
 SEC Filing Summaries:
 {_format_sec_summaries_for_prompt(context["primary_source_filings"])}
 
+IPO Watchlist:
+{_format_ipos_for_prompt(context["ipos"])}
+
 Required sections:
 1. Title: Daily StockBot Market Intelligence Report
 2. Date/time generated
@@ -183,6 +194,9 @@ Primary-source filings/company updates
 
 Also include a short section named:
 SEC Filing Summaries
+
+Also include a short section named:
+IPO Watchlist
 
 Tone rules:
 - Direct and practical.
@@ -217,6 +231,9 @@ def _build_fallback_report(context: dict) -> str:
         "",
         "SEC Filing Summaries",
         *_format_sec_summary_items(context["primary_source_filings"]),
+        "",
+        "IPO Watchlist",
+        *_format_ipo_items(context["ipos"]),
         "",
         "Highest-confidence possible buy watches",
         *_format_section_items(buys),
@@ -292,6 +309,23 @@ def _format_sec_summary_items(filings: list[dict]) -> list[str]:
     return lines
 
 
+def _format_ipo_items(ipos: list[dict]) -> list[str]:
+    """Format IPO rows for fallback reports."""
+    if not ipos:
+        return ["- None found."]
+    lines = []
+    for ipo in ipos[:12]:
+        risks = _json_list(ipo.get("risks"))
+        risk_text = "; ".join(risks[:3]) if risks else "needs confirmation"
+        lines.append(
+            f"- {ipo.get('ticker') or 'N/A'} | {ipo.get('company_name') or 'N/A'} | "
+            f"{ipo.get('status')} | score {ipo.get('prediction_score') or 0} | "
+            f"{ipo.get('expected_direction') or 'uncertain'} | {ipo.get('prediction_summary') or ''} | "
+            f"Risks: {risk_text} | {ipo.get('source_url')}"
+        )
+    return lines
+
+
 def _format_primary_sources_for_prompt(filings: list[dict]) -> str:
     """Format SEC filings compactly for the report prompt."""
     if not filings:
@@ -320,6 +354,24 @@ def _format_sec_summaries_for_prompt(filings: list[dict]) -> str:
             f"filing_date={filing.get('filing_date')} | action={filing.get('action')} | "
             f"confidence={filing.get('confidence')} | summary={filing.get('filing_summary')} | "
             f"key_points={key_points[:4]} | risks={risks[:4]} | url={filing.get('filing_url')}"
+        )
+    return "\n".join(lines)
+
+
+def _format_ipos_for_prompt(ipos: list[dict]) -> str:
+    """Format IPO watch rows compactly for Ollama."""
+    if not ipos:
+        return "No IPO watchlist rows found."
+    lines = []
+    for ipo in ipos[:20]:
+        lines.append(
+            f"- ticker={ipo.get('ticker')} | company={ipo.get('company_name')} | "
+            f"status={ipo.get('status')} | ipo_date={ipo.get('ipo_date')} | "
+            f"final_price={ipo.get('final_ipo_price')} | opening={ipo.get('opening_price')} | "
+            f"current={ipo.get('current_price')} | score={ipo.get('prediction_score')} | "
+            f"direction={ipo.get('expected_direction')} | action={ipo.get('watch_action')} | "
+            f"summary={ipo.get('prediction_summary')} | risks={_json_list(ipo.get('risks'))[:4]} | "
+            f"url={ipo.get('source_url')}"
         )
     return "\n".join(lines)
 

@@ -1,5 +1,44 @@
 {
-  "tickers": ["NVDA", "AMD", "TSLA", "MSFT", "AAPL", "PLTR", "SMCI", "GOOGL", "META", "AVGO"],
+  "tickers": [
+    "AIP",
+    "PLTR",
+    "INTC",
+    "SMR",
+    "OKLO",
+    "NVDA",
+    "ALAB",
+    "TEM",
+    "STX",
+    "MAGS",
+    "XE",
+    "PSMT",
+    "QCOM",
+    "SMCI",
+    "BE",
+    "LUMI.ST",
+    "AEM",
+    "SPY",
+    "VRT",
+    "KLAC",
+    "ASML",
+    "SOXX",
+    "SMH",
+    "CLS",
+    "VMAV",
+    "GLNG",
+    "FLNG",
+    "LNG",
+    "AMZN",
+    "SIL=F",
+    "ACB",
+    "TSLA",
+    "COST",
+    "META",
+    "ARM",
+    "AMD",
+    "HG=F",
+    "AEP"
+  ],
   "categories": [
     "artificial intelligence",
     "semiconductor",
@@ -37,5 +76,9 @@
     "PLTR": "0001321655",
     "SMCI": "0001375365"
   },
-  "investor_relations_feeds": []
+  "investor_relations_feeds": [],
+  "ipo_feeds": [
+    "https://www.nasdaq.com/market-activity/ipos",
+    "https://www.marketwatch.com/tools/ipo-calendar"
+  ]
 }

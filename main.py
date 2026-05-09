@@ -22,6 +22,8 @@ from database import (
 from email_client import EmailClient, format_signal_alert_body, format_signal_alert_subject
 from inbox_monitor import InboxMonitor
 from investor_relations_monitor import InvestorRelationsMonitor
+from ipo_monitor import IPOMonitor
+from market_data_client import MarketDataClient
 from ollama_client import OllamaClient
 from report_generator import generate_daily_report, record_daily_report, should_send_daily_report
 from rss_monitor import Article, RSSMonitor
@@ -123,6 +125,15 @@ def check_sec_and_ir(
             _send_and_log_alert(config, emailer, signal_payload, signal_id, "ir_alert")
 
     log_run_event(config.database_path, "sec_check_finished", "Finished SEC/IR check")
+
+
+def check_ipos(config: AppConfig, ipo_monitor: IPOMonitor) -> None:
+    """Run the IPO monitor safely."""
+    logger = logging.getLogger(__name__)
+    logger.info("Checking IPO watch sources")
+    log_run_event(config.database_path, "ipo_check_started", "Started IPO check")
+    ipo_monitor.check_ipos()
+    log_run_event(config.database_path, "ipo_check_finished", "Finished IPO check")
 
 
 def _extract_and_summarize_sec_filing(
@@ -290,6 +301,11 @@ def main() -> None:
     )
     emailer = EmailClient(config)
     inbox_monitor = InboxMonitor(config, ollama, emailer)
+    market_data = MarketDataClient(
+        provider=config.market_data_provider,
+        timeout_seconds=config.http_timeout_seconds,
+    )
+    ipo_monitor = IPOMonitor(config, ollama, market_data, emailer)
     sec_client = SECEdgarClient(config)
     sec_parser = SECFilingParser(
         user_agent=config.sec_user_agent,
@@ -304,6 +320,7 @@ def main() -> None:
     next_news_check = 0.0
     next_email_check = 0.0
     next_sec_check = 0.0
+    next_ipo_check = 0.0
 
     logger.info("StockBot running. Press Ctrl+C to stop.")
 
@@ -334,6 +351,14 @@ def main() -> None:
                     logger.exception("SEC/IR check failed")
                     log_run_event(config.database_path, "sec_check_error", "SEC/IR check failed")
                 next_sec_check = now + config.sec_check_interval_seconds
+
+            if config.enable_ipo_monitor and now >= next_ipo_check:
+                try:
+                    check_ipos(config, ipo_monitor)
+                except Exception:
+                    logger.exception("IPO check failed")
+                    log_run_event(config.database_path, "ipo_check_error", "IPO check failed")
+                next_ipo_check = now + config.ipo_check_interval_seconds
 
             try:
                 check_daily_report(config, ollama, emailer)

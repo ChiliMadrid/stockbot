@@ -14,6 +14,7 @@
 - Added investor-relations RSS ingestion for optional company feeds.
 - Added `sec_filings` SQLite tracking by accession number.
 - Added SEC filing text extraction and primary-source summary generation.
+- Added IPO monitoring with configurable IPO feeds, S-1 candidates, Stooq price checks, email alerts, and daily report output.
 
 ## Current Implemented Features
 
@@ -28,6 +29,7 @@
 - SEC filings and investor-relations updates treated as primary-source inputs.
 - Daily report section for primary-source filings/company updates.
 - SEC filing summaries with extracted text paths, key points, risks, action, and confidence.
+- IPO watchlist rows with prediction summaries, scores, risks, and price checks.
 - Continuous Windows-compatible main loop with Ctrl+C shutdown.
 
 ## How To Test Email Sending
@@ -74,6 +76,19 @@ python -c "from config import load_config; from sec_edgar_client import SECEdgar
 
 For the full summary path, make sure Ollama is running and `ENABLE_SEC_TEXT_EXTRACTION=true`, then run `python main.py`.
 
+## How To Test IPO Monitoring
+
+Run:
+
+```powershell
+python -m compileall .
+python -c "from config import load_config; c=load_config(); print(c.watchlist_tickers)"
+python -c "from market_data_client import MarketDataClient; print(MarketDataClient().get_quote('NVDA'))"
+python -c "from config import load_config; from database import initialize_database, get_recent_ipos; c=load_config(); initialize_database(c.database_path); print(get_recent_ipos(c.database_path)[:3])"
+```
+
+For the full monitor path, make sure Ollama is running and `ENABLE_IPO_MONITOR=true`, then run `python main.py`.
+
 ## Known Limitations
 
 - No paid news APIs yet.
@@ -82,7 +97,9 @@ For the full summary path, make sure Ollama is running and `ENABLE_SEC_TEXT_EXTR
 - RSS feeds can be delayed, duplicated, or missing key primary-source context.
 - SEC filing text extraction is lightweight and does not parse XBRL tables deeply yet.
 - Investor-relations feeds must be configured manually in `config/watchlist.json`.
+- IPO calendar sources are best-effort; many public IPO pages are HTML pages, not clean RSS feeds.
+- Stooq price checks are lightweight and may not cover every suffix, future, or newly listed symbol.
 
 ## Next Recommended Step
 
-Add deeper XBRL/financial table extraction for SEC filings.
+Add robust IPO calendar ingestion from a structured provider or maintained CSV source.

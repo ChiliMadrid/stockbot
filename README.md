@@ -93,6 +93,12 @@ SEC_FORMS_TO_TRACK=8-K,10-Q,10-K,S-1,SC 13G,SC 13D,4
 ENABLE_SEC_TEXT_EXTRACTION=true
 SEC_TEXT_MAX_CHARS=12000
 SEC_SUMMARY_MIN_CONFIDENCE=50
+
+ENABLE_IPO_MONITOR=true
+IPO_CHECK_INTERVAL_SECONDS=3600
+IPO_LOOKAHEAD_DAYS=30
+IPO_ALERT_MIN_SCORE=70
+MARKET_DATA_PROVIDER=stooq
 ```
 
 You can also set values directly in Windows PowerShell:
@@ -110,6 +116,7 @@ $env:DAILY_REPORT_MINUTE="30"
 $env:ENABLE_SEC_MONITOR="true"
 $env:SEC_USER_AGENT="StockBot/0.1 contact:madridchili96@gmail.com"
 $env:ENABLE_SEC_TEXT_EXTRACTION="true"
+$env:ENABLE_IPO_MONITOR="true"
 ```
 
 ## Run
@@ -163,6 +170,41 @@ SEC_SUMMARY_MIN_CONFIDENCE=50
 
 Download or parsing failures are logged and do not stop the app.
 
+## IPO Monitoring
+
+StockBot can monitor configurable IPO sources, recent SEC S-1 filings, and basic post-listing prices. IPO rows are stored in SQLite and scored by Ollama using watchlist-only language.
+
+IPO settings:
+
+```text
+ENABLE_IPO_MONITOR=true
+IPO_CHECK_INTERVAL_SECONDS=3600
+IPO_LOOKAHEAD_DAYS=30
+IPO_ALERT_MIN_SCORE=70
+MARKET_DATA_PROVIDER=stooq
+```
+
+The watchlist supports `ipo_feeds` for configurable IPO RSS/URL sources:
+
+```json
+{
+  "ipo_feeds": [
+    "https://www.nasdaq.com/market-activity/ipos",
+    "https://www.marketwatch.com/tools/ipo-calendar"
+  ]
+}
+```
+
+IPO alerts are sent for new IPO candidates, final price/opening price changes when detected, and high-priority watch scores. Alerts are watchlist notes only and do not recommend buying.
+
+Quick tests:
+
+```powershell
+python -c "from config import load_config; c=load_config(); print(c.watchlist_tickers)"
+python -c "from market_data_client import MarketDataClient; print(MarketDataClient().get_quote('NVDA'))"
+python -c "from config import load_config; from database import initialize_database, get_recent_ipos; c=load_config(); initialize_database(c.database_path); print(get_recent_ipos(c.database_path)[:3])"
+```
+
 Quick SEC fetch test:
 
 ```powershell
@@ -189,7 +231,7 @@ The chatbot is intentionally cautious. It may suggest a `watch`, `possible setup
 
 StockBot can generate one daily market intelligence report per calendar day. The report reviews recent SQLite signals, groups them by ticker/category, ranks the most important items, adds approximate source verification labels, asks Ollama to write an email-friendly report, saves the report to `reports/`, logs it in SQLite, and emails it.
 
-Daily reports include `Primary-source filings/company updates` and `SEC Filing Summaries` sections when recent SEC filings or company updates are available.
+Daily reports include `Primary-source filings/company updates`, `SEC Filing Summaries`, and `IPO Watchlist` sections when relevant rows are available.
 
 Default schedule:
 
@@ -272,6 +314,13 @@ Primary-source SEC filings are stored in:
 
 ```text
 sec_filings
+```
+
+IPO watch data is stored in:
+
+```text
+ipos
+ipo_price_checks
 ```
 
 Extracted SEC filing text files are saved under:

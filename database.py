@@ -95,6 +95,42 @@ CREATE TABLE IF NOT EXISTS sec_filings (
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS ipos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_name TEXT,
+    ticker TEXT,
+    ipo_date TEXT,
+    final_ipo_price REAL,
+    opening_price REAL,
+    current_price REAL,
+    source_url TEXT NOT NULL,
+    status TEXT NOT NULL,
+    prediction_summary TEXT,
+    prediction_score INTEGER DEFAULT 0,
+    expected_direction TEXT,
+    watch_action TEXT,
+    key_drivers TEXT,
+    risks TEXT,
+    confidence INTEGER DEFAULT 0,
+    raw_model_response TEXT,
+    alerted INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source_url, ticker, ipo_date)
+);
+
+CREATE TABLE IF NOT EXISTS ipo_price_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ipo_id INTEGER NOT NULL,
+    ticker TEXT,
+    final_ipo_price REAL,
+    opening_price REAL,
+    current_price REAL,
+    provider TEXT,
+    checked_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(ipo_id) REFERENCES ipos(id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_articles_url ON articles(url);
 CREATE INDEX IF NOT EXISTS idx_signals_confidence ON signals(confidence);
 CREATE INDEX IF NOT EXISTS idx_email_messages_created_at ON email_messages(created_at);
@@ -102,6 +138,9 @@ CREATE INDEX IF NOT EXISTS idx_chatbot_conversations_created_at ON chatbot_conve
 CREATE INDEX IF NOT EXISTS idx_daily_reports_report_date ON daily_reports(report_date);
 CREATE INDEX IF NOT EXISTS idx_sec_filings_accession ON sec_filings(accession);
 CREATE INDEX IF NOT EXISTS idx_sec_filings_created_at ON sec_filings(created_at);
+CREATE INDEX IF NOT EXISTS idx_ipos_status ON ipos(status);
+CREATE INDEX IF NOT EXISTS idx_ipos_ipo_date ON ipos(ipo_date);
+CREATE INDEX IF NOT EXISTS idx_ipo_price_checks_checked_at ON ipo_price_checks(checked_at);
 """
 
 
@@ -111,6 +150,7 @@ def initialize_database(database_path: Path) -> None:
     with sqlite3.connect(database_path) as connection:
         connection.executescript(SCHEMA)
         _migrate_sec_filings(connection)
+        _migrate_ipos(connection)
 
 
 def _migrate_sec_filings(connection: sqlite3.Connection) -> None:
@@ -125,6 +165,21 @@ def _migrate_sec_filings(connection: sqlite3.Connection) -> None:
         "filing_risks": "ALTER TABLE sec_filings ADD COLUMN filing_risks TEXT;",
         "text_extracted": "ALTER TABLE sec_filings ADD COLUMN text_extracted INTEGER DEFAULT 0;",
         "summarized_at": "ALTER TABLE sec_filings ADD COLUMN summarized_at TEXT;",
+    }
+    for column, sql in migrations.items():
+        if column not in existing_columns:
+            connection.execute(sql)
+
+
+def _migrate_ipos(connection: sqlite3.Connection) -> None:
+    """Add IPO columns to existing databases when needed."""
+    existing_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(ipos);").fetchall()
+    }
+    migrations = {
+        "raw_model_response": "ALTER TABLE ipos ADD COLUMN raw_model_response TEXT;",
+        "alerted": "ALTER TABLE ipos ADD COLUMN alerted INTEGER DEFAULT 0;",
+        "updated_at": "ALTER TABLE ipos ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP;",
     }
     for column, sql in migrations.items():
         if column not in existing_columns:
@@ -478,6 +533,173 @@ def get_recent_sec_filings(database_path: Path, lookback_hours: int) -> list[dic
     return [dict(zip(keys, row)) for row in rows]
 
 
+def save_or_update_ipo(database_path: Path, ipo: dict[str, Any], prediction: dict[str, Any]) -> tuple[int, bool, bool]:
+    """Insert or update an IPO row. Returns row ID, created flag, and materially changed flag."""
+    ticker = _clean_optional_text(ipo.get("ticker"))
+    source_url = str(ipo.get("source_url", "")).strip()
+    ipo_date = _clean_optional_text(ipo.get("ipo_date"))
+    existing = None
+    with sqlite3.connect(database_path) as connection:
+        if ticker or ipo_date:
+            existing = connection.execute(
+                """
+                SELECT id, final_ipo_price, opening_price, current_price, status, prediction_score
+                FROM ipos
+                WHERE source_url = ? AND COALESCE(ticker, '') = COALESCE(?, '')
+                  AND COALESCE(ipo_date, '') = COALESCE(?, '')
+                LIMIT 1;
+                """,
+                (source_url, ticker, ipo_date),
+            ).fetchone()
+
+        values = (
+            _clean_optional_text(ipo.get("company_name")),
+            ticker,
+            ipo_date,
+            _clean_optional_float(ipo.get("final_ipo_price")),
+            _clean_optional_float(ipo.get("opening_price")),
+            _clean_optional_float(ipo.get("current_price")),
+            source_url,
+            str(ipo.get("status", "watching")),
+            prediction.get("prediction_summary", ""),
+            int(prediction.get("prediction_score", 0)),
+            prediction.get("expected_direction", "uncertain"),
+            prediction.get("watch_action", "watch"),
+            json.dumps(prediction.get("key_drivers", [])),
+            json.dumps(prediction.get("risks", [])),
+            int(prediction.get("confidence", 0)),
+            prediction.get("raw_model_response", ""),
+        )
+
+        if existing is None:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO ipos (
+                    company_name, ticker, ipo_date, final_ipo_price, opening_price, current_price,
+                    source_url, status, prediction_summary, prediction_score, expected_direction,
+                    watch_action, key_drivers, risks, confidence, raw_model_response
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """,
+                values,
+            )
+            connection.commit()
+            if cursor.lastrowid:
+                return int(cursor.lastrowid), True, True
+
+        row = connection.execute(
+            """
+            SELECT id, final_ipo_price, opening_price, current_price, status, prediction_score
+            FROM ipos
+            WHERE source_url = ? AND COALESCE(ticker, '') = COALESCE(?, '')
+              AND COALESCE(ipo_date, '') = COALESCE(?, '')
+            LIMIT 1;
+            """,
+            (source_url, ticker, ipo_date),
+        ).fetchone()
+        if row is None:
+            row = connection.execute("SELECT id, final_ipo_price, opening_price, current_price, status, prediction_score FROM ipos WHERE source_url = ? LIMIT 1;", (source_url,)).fetchone()
+        if row is None:
+            return 0, False, False
+
+        changed = _ipo_materially_changed(row, ipo, prediction)
+        connection.execute(
+            """
+            UPDATE ipos
+            SET company_name = ?,
+                ticker = ?,
+                ipo_date = ?,
+                final_ipo_price = ?,
+                opening_price = ?,
+                current_price = ?,
+                source_url = ?,
+                status = ?,
+                prediction_summary = ?,
+                prediction_score = ?,
+                expected_direction = ?,
+                watch_action = ?,
+                key_drivers = ?,
+                risks = ?,
+                confidence = ?,
+                raw_model_response = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?;
+            """,
+            (*values, row[0]),
+        )
+        connection.commit()
+        return int(row[0]), False, changed
+
+
+def save_ipo_price_check(database_path: Path, ipo_id: int, ticker: str | None, prices: dict[str, Any]) -> None:
+    """Save a market-data price check for an IPO."""
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO ipo_price_checks (
+                ipo_id, ticker, final_ipo_price, opening_price, current_price, provider
+            )
+            VALUES (?, ?, ?, ?, ?, ?);
+            """,
+            (
+                ipo_id,
+                ticker,
+                _clean_optional_float(prices.get("final_ipo_price")),
+                _clean_optional_float(prices.get("opening_price")),
+                _clean_optional_float(prices.get("current_price")),
+                prices.get("provider", ""),
+            ),
+        )
+        connection.commit()
+
+
+def mark_ipo_alerted(database_path: Path, ipo_id: int) -> None:
+    """Mark an IPO row as alerted."""
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("UPDATE ipos SET alerted = 1 WHERE id = ?;", (ipo_id,))
+        connection.commit()
+
+
+def get_recent_ipos(database_path: Path, lookback_hours: int = 720) -> list[dict]:
+    """Return recent IPO watch rows for reports."""
+    sql = """
+    SELECT id, company_name, ticker, ipo_date, final_ipo_price, opening_price,
+           current_price, source_url, status, prediction_summary, prediction_score,
+           expected_direction, watch_action, key_drivers, risks, confidence,
+           alerted, created_at, updated_at
+    FROM ipos
+    WHERE datetime(updated_at) >= datetime('now', ?)
+       OR status IN ('upcoming', 'priced', 'opened', 'watching')
+    ORDER BY prediction_score DESC, confidence DESC, updated_at DESC
+    LIMIT 50;
+    """
+    keys = [
+        "id",
+        "company_name",
+        "ticker",
+        "ipo_date",
+        "final_ipo_price",
+        "opening_price",
+        "current_price",
+        "source_url",
+        "status",
+        "prediction_summary",
+        "prediction_score",
+        "expected_direction",
+        "watch_action",
+        "key_drivers",
+        "risks",
+        "confidence",
+        "alerted",
+        "created_at",
+        "updated_at",
+    ]
+    lookback = f"-{int(lookback_hours)} hours"
+    with sqlite3.connect(database_path) as connection:
+        rows = connection.execute(sql, (lookback,)).fetchall()
+    return [dict(zip(keys, row)) for row in rows]
+
+
 def save_daily_report_record(database_path: Path, report_date: str, report_path: str, emailed: bool) -> int:
     """Save or update a daily report record."""
     sql = """
@@ -545,3 +767,33 @@ def get_recent_conversation_context(database_path: Path, limit: int = 10) -> str
         lines.append(f"  bot: {bot_response[:300]}")
 
     return "\n".join(lines)
+
+
+def _clean_optional_text(value: Any) -> str | None:
+    """Normalize optional text for SQLite."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _clean_optional_float(value: Any) -> float | None:
+    """Normalize optional float values."""
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _ipo_materially_changed(row: tuple, ipo: dict[str, Any], prediction: dict[str, Any]) -> bool:
+    """Return True when IPO alert-worthy fields changed."""
+    _, old_final, old_open, old_current, old_status, old_score = row
+    return (
+        old_final != _clean_optional_float(ipo.get("final_ipo_price"))
+        or old_open != _clean_optional_float(ipo.get("opening_price"))
+        or old_current != _clean_optional_float(ipo.get("current_price"))
+        or old_status != str(ipo.get("status", "watching"))
+        or int(old_score or 0) != int(prediction.get("prediction_score", 0))
+    )

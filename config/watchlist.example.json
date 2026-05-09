@@ -1,5 +1,44 @@
 {
-  "tickers": ["NVDA", "AMD", "TSLA", "MSFT", "AAPL", "PLTR", "SMCI", "GOOGL", "META", "AVGO"],
+  "tickers": [
+    "AIP",
+    "PLTR",
+    "INTC",
+    "SMR",
+    "OKLO",
+    "NVDA",
+    "ALAB",
+    "TEM",
+    "STX",
+    "MAGS",
+    "XE",
+    "PSMT",
+    "QCOM",
+    "SMCI",
+    "BE",
+    "LUMI.ST",
+    "AEM",
+    "SPY",
+    "VRT",
+    "KLAC",
+    "ASML",
+    "SOXX",
+    "SMH",
+    "CLS",
+    "VMAV",
+    "GLNG",
+    "FLNG",
+    "LNG",
+    "AMZN",
+    "SIL=F",
+    "ACB",
+    "TSLA",
+    "COST",
+    "META",
+    "ARM",
+    "AMD",
+    "HG=F",
+    "AEP"
+  ],
   "categories": [
     "artificial intelligence",
     "semiconductor",
@@ -39,5 +78,9 @@
   },
   "investor_relations_feeds": [
     "https://investor.nvidia.com/rss/news-releases.xml"
+  ],
+  "ipo_feeds": [
+    "https://www.nasdaq.com/market-activity/ipos",
+    "https://www.marketwatch.com/tools/ipo-calendar"
   ]
 }
