@@ -8,3 +8,4 @@ database/*.sqlite3
 logs/*.log
 reports/*.txt
 reports/*.md
+reports/sec_filings/*.txt

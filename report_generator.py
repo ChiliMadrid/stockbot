@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import json
 from collections import Counter, defaultdict
 from datetime import date, datetime
 from pathlib import Path
@@ -76,7 +77,11 @@ def build_report_context(config) -> dict:
         lookback_hours=config.daily_report_lookback_hours,
         min_confidence=config.daily_report_min_confidence,
     )
-    sec_filings = get_recent_sec_filings(config.database_path, config.daily_report_lookback_hours)
+    sec_filings = [
+        filing
+        for filing in get_recent_sec_filings(config.database_path, config.daily_report_lookback_hours)
+        if _sec_summary_confidence(filing) >= config.sec_summary_min_confidence or not filing.get("filing_summary")
+    ]
 
     enriched = []
     for signal in signals:
@@ -156,6 +161,9 @@ Signals:
 Primary-source filings/company updates:
 {_format_primary_sources_for_prompt(context["primary_source_filings"])}
 
+SEC Filing Summaries:
+{_format_sec_summaries_for_prompt(context["primary_source_filings"])}
+
 Required sections:
 1. Title: Daily StockBot Market Intelligence Report
 2. Date/time generated
@@ -172,6 +180,9 @@ Required sections:
 
 Also include a short section named:
 Primary-source filings/company updates
+
+Also include a short section named:
+SEC Filing Summaries
 
 Tone rules:
 - Direct and practical.
@@ -203,6 +214,9 @@ def _build_fallback_report(context: dict) -> str:
         "",
         "Primary-source filings/company updates",
         *_format_primary_source_items(context["primary_source_filings"]),
+        "",
+        "SEC Filing Summaries",
+        *_format_sec_summary_items(context["primary_source_filings"]),
         "",
         "Highest-confidence possible buy watches",
         *_format_section_items(buys),
@@ -261,6 +275,23 @@ def _format_primary_source_items(filings: list[dict]) -> list[str]:
     ]
 
 
+def _format_sec_summary_items(filings: list[dict]) -> list[str]:
+    """Format SEC summaries for fallback reports."""
+    summarized = [filing for filing in filings if filing.get("filing_summary")]
+    if not summarized:
+        return ["- None available yet."]
+    lines = []
+    for filing in summarized[:10]:
+        risks = _json_list(filing.get("filing_risks"))
+        risk_text = "; ".join(risks[:3]) if risks else filing.get("risk_warning") or "needs confirmation"
+        lines.append(
+            f"- {filing.get('ticker')} | {filing.get('form')} | filed {filing.get('filing_date')} | "
+            f"{filing.get('action') or 'watch'} | {filing.get('confidence') or 0}% | "
+            f"{filing.get('filing_summary')} | Key risks: {risk_text} | {filing.get('filing_url')}"
+        )
+    return lines
+
+
 def _format_primary_sources_for_prompt(filings: list[dict]) -> str:
     """Format SEC filings compactly for the report prompt."""
     if not filings:
@@ -273,6 +304,24 @@ def _format_primary_sources_for_prompt(filings: list[dict]) -> str:
         )
         for filing in filings[:20]
     )
+
+
+def _format_sec_summaries_for_prompt(filings: list[dict]) -> str:
+    """Format SEC filing summaries compactly for Ollama."""
+    summarized = [filing for filing in filings if filing.get("filing_summary")]
+    if not summarized:
+        return "No SEC filing summaries available yet."
+    lines = []
+    for filing in summarized[:20]:
+        risks = _json_list(filing.get("filing_risks"))
+        key_points = _json_list(filing.get("filing_key_points"))
+        lines.append(
+            f"- ticker={filing.get('ticker')} | form={filing.get('form')} | "
+            f"filing_date={filing.get('filing_date')} | action={filing.get('action')} | "
+            f"confidence={filing.get('confidence')} | summary={filing.get('filing_summary')} | "
+            f"key_points={key_points[:4]} | risks={risks[:4]} | url={filing.get('filing_url')}"
+        )
+    return "\n".join(lines)
 
 
 def _format_signals_for_prompt(signals: list[dict]) -> str:
@@ -322,3 +371,26 @@ def _keywords(text: str) -> set[str]:
 def _signal_group(signal: dict) -> str:
     """Return the ticker/category grouping label for a signal."""
     return signal.get("matched_symbol") or signal.get("matched_category") or "Market"
+
+
+def _json_list(value: object) -> list[str]:
+    """Parse a JSON list stored in SQLite."""
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    try:
+        parsed = json.loads(str(value))
+    except json.JSONDecodeError:
+        return [str(value)]
+    if isinstance(parsed, list):
+        return [str(item) for item in parsed]
+    return [str(parsed)]
+
+
+def _sec_summary_confidence(filing: dict) -> int:
+    """Return SEC summary confidence, defaulting unsummarized filings into the report."""
+    try:
+        return int(filing.get("confidence") or 0)
+    except (TypeError, ValueError):
+        return 0

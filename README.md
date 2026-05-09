@@ -90,6 +90,9 @@ ENABLE_SEC_MONITOR=true
 SEC_USER_AGENT=StockBot/0.1 contact:madridchili96@gmail.com
 SEC_CHECK_INTERVAL_SECONDS=900
 SEC_FORMS_TO_TRACK=8-K,10-Q,10-K,S-1,SC 13G,SC 13D,4
+ENABLE_SEC_TEXT_EXTRACTION=true
+SEC_TEXT_MAX_CHARS=12000
+SEC_SUMMARY_MIN_CONFIDENCE=50
 ```
 
 You can also set values directly in Windows PowerShell:
@@ -106,6 +109,7 @@ $env:DAILY_REPORT_HOUR="7"
 $env:DAILY_REPORT_MINUTE="30"
 $env:ENABLE_SEC_MONITOR="true"
 $env:SEC_USER_AGENT="StockBot/0.1 contact:madridchili96@gmail.com"
+$env:ENABLE_SEC_TEXT_EXTRACTION="true"
 ```
 
 ## Run
@@ -147,6 +151,18 @@ The watchlist supports `sec_cik_map` and `investor_relations_feeds`:
 
 SEC filings are tracked by accession number in the `sec_filings` table. New important filings are alerted when model confidence is at least `60`. SEC EDGAR, investor relations, company press releases, and earnings transcripts are treated as primary sources in source verification.
 
+When `ENABLE_SEC_TEXT_EXTRACTION=true`, StockBot downloads the filing document, strips scripts/styles/HTML with lightweight stdlib parsing, saves readable text under `reports/sec_filings/`, and asks Ollama for a conservative primary-source summary. The summary captures key points, potential opportunities, potential risks, sentiment, action, urgency, confidence, and a risk warning.
+
+SEC text extraction settings:
+
+```text
+ENABLE_SEC_TEXT_EXTRACTION=true
+SEC_TEXT_MAX_CHARS=12000
+SEC_SUMMARY_MIN_CONFIDENCE=50
+```
+
+Download or parsing failures are logged and do not stop the app.
+
 Quick SEC fetch test:
 
 ```powershell
@@ -173,7 +189,7 @@ The chatbot is intentionally cautious. It may suggest a `watch`, `possible setup
 
 StockBot can generate one daily market intelligence report per calendar day. The report reviews recent SQLite signals, groups them by ticker/category, ranks the most important items, adds approximate source verification labels, asks Ollama to write an email-friendly report, saves the report to `reports/`, logs it in SQLite, and emails it.
 
-Daily reports include a `Primary-source filings/company updates` section when recent SEC filings or company updates are available.
+Daily reports include `Primary-source filings/company updates` and `SEC Filing Summaries` sections when recent SEC filings or company updates are available.
 
 Default schedule:
 
@@ -256,6 +272,12 @@ Primary-source SEC filings are stored in:
 
 ```text
 sec_filings
+```
+
+Extracted SEC filing text files are saved under:
+
+```text
+reports/sec_filings/
 ```
 
 Logs:

@@ -13,6 +13,7 @@
 - Added SEC EDGAR submissions ingestion for tracked CIKs/forms.
 - Added investor-relations RSS ingestion for optional company feeds.
 - Added `sec_filings` SQLite tracking by accession number.
+- Added SEC filing text extraction and primary-source summary generation.
 
 ## Current Implemented Features
 
@@ -26,6 +27,7 @@
 - Source verification labels: `CONFIRMED`, `PARTIALLY_CONFIRMED`, and `RUMOR_OR_UNVERIFIED`.
 - SEC filings and investor-relations updates treated as primary-source inputs.
 - Daily report section for primary-source filings/company updates.
+- SEC filing summaries with extracted text paths, key points, risks, action, and confidence.
 - Continuous Windows-compatible main loop with Ctrl+C shutdown.
 
 ## How To Test Email Sending
@@ -61,15 +63,26 @@ python -c "from config import load_config; from sec_edgar_client import SECEdgar
 
 To test the live app path, set `ENABLE_SEC_MONITOR=true`, confirm `SEC_USER_AGENT` includes contact info, then run `python main.py`.
 
+## How To Test SEC Text Extraction
+
+Run:
+
+```powershell
+python -m compileall .
+python -c "from config import load_config; from sec_edgar_client import SECEdgarClient; c=load_config(); client=SECEdgarClient(c); f=client.fetch_recent_filings('NVDA')[0]; print(f['filing_url'])"
+```
+
+For the full summary path, make sure Ollama is running and `ENABLE_SEC_TEXT_EXTRACTION=true`, then run `python main.py`.
+
 ## Known Limitations
 
 - No paid news APIs yet.
 - Source verification uses simple source-name scoring and headline keyword overlap only.
 - This is not true real-time cross-source verification yet.
 - RSS feeds can be delayed, duplicated, or missing key primary-source context.
-- SEC ingestion uses the submissions endpoint only; no full filing text extraction yet.
+- SEC filing text extraction is lightweight and does not parse XBRL tables deeply yet.
 - Investor-relations feeds must be configured manually in `config/watchlist.json`.
 
 ## Next Recommended Step
 
-Add SEC filing text extraction and primary-source summary generation.
+Add deeper XBRL/financial table extraction for SEC filings.

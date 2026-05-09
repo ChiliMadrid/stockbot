@@ -42,7 +42,6 @@ class SECEdgarClient:
             {
                 "User-Agent": config.sec_user_agent,
                 "Accept-Encoding": "gzip, deflate",
-                "Host": "data.sec.gov",
             }
         )
 

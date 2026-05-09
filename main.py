@@ -17,6 +17,7 @@ from database import (
     save_signal,
     sec_filing_exists,
     signal_already_exists,
+    update_sec_filing_text_summary,
 )
 from email_client import EmailClient, format_signal_alert_body, format_signal_alert_subject
 from inbox_monitor import InboxMonitor
@@ -25,6 +26,7 @@ from ollama_client import OllamaClient
 from report_generator import generate_daily_report, record_daily_report, should_send_daily_report
 from rss_monitor import Article, RSSMonitor
 from sec_edgar_client import SECEdgarClient
+from sec_filing_parser import SECFilingParser
 from utils import configure_logging, should_send_signal_alert
 
 
@@ -80,6 +82,7 @@ def check_news(config: AppConfig, rss_monitor: RSSMonitor, ollama: OllamaClient,
 def check_sec_and_ir(
     config: AppConfig,
     sec_client: SECEdgarClient,
+    sec_parser: SECFilingParser,
     ir_monitor: InvestorRelationsMonitor,
     ollama: OllamaClient,
     emailer: EmailClient,
@@ -97,13 +100,14 @@ def check_sec_and_ir(
 
             save_sec_filing(config.database_path, filing)
             article = _sec_filing_to_article(filing)
-            stored_signal = _classify_and_store_primary_item(config, ollama, article)
+            summary = _extract_and_summarize_sec_filing(config, sec_parser, ollama, filing)
+            stored_signal = _classify_and_store_primary_item(config, ollama, article, summary)
             mark_sec_filing_processed(config.database_path, filing["accession"])
 
             if stored_signal is not None:
                 signal_id, signal_data = stored_signal
                 signal = _signal_for_alert_payload(signal_id, article, signal_data)
-                if _should_send_sec_alert(filing["form"], signal):
+                if _should_send_sec_alert(config, filing["form"], signal):
                     _send_and_log_alert(config, emailer, signal, signal_id, "sec_alert")
 
     for article in ir_monitor.poll():
@@ -121,14 +125,52 @@ def check_sec_and_ir(
     log_run_event(config.database_path, "sec_check_finished", "Finished SEC/IR check")
 
 
-def _classify_and_store_primary_item(config: AppConfig, ollama: OllamaClient, article: Article) -> tuple[int, dict] | None:
+def _extract_and_summarize_sec_filing(
+    config: AppConfig,
+    sec_parser: SECFilingParser,
+    ollama: OllamaClient,
+    filing: dict,
+) -> dict | None:
+    """Extract SEC filing text and summarize it when enabled."""
+    if not config.enable_sec_text_extraction:
+        return None
+
+    text_path, filing_text = sec_parser.download_extract_and_save(
+        filing,
+        reports_dir=config.reports_dir,
+        max_chars=config.sec_text_max_chars,
+    )
+    if not filing_text:
+        log_run_event(
+            config.database_path,
+            "sec_text_extraction_failed",
+            f"Failed to extract text for {filing.get('accession')}",
+        )
+        return None
+
+    summary = ollama.summarize_sec_filing(filing, filing_text)
+    update_sec_filing_text_summary(
+        config.database_path,
+        accession=filing["accession"],
+        filing_text_path=str(text_path) if text_path else None,
+        summary=summary,
+    )
+    return summary
+
+
+def _classify_and_store_primary_item(
+    config: AppConfig,
+    ollama: OllamaClient,
+    article: Article,
+    existing_signal: dict | None = None,
+) -> tuple[int, dict] | None:
     """Classify and store a primary-source article-like item."""
     if signal_already_exists(config.database_path, article.url):
         return None
     article_id = save_article(config.database_path, article)
     if article_id is None:
         return None
-    signal = ollama.classify_headline(article)
+    signal = existing_signal or ollama.classify_headline(article)
     signal_id = save_signal(config.database_path, article_id, signal)
     return signal_id, signal
 
@@ -159,14 +201,15 @@ def _signal_for_alert_payload(signal_id: int, article: Article, signal: dict) ->
     return payload
 
 
-def _should_send_sec_alert(form: str, signal: dict) -> bool:
+def _should_send_sec_alert(config: AppConfig, form: str, signal: dict) -> bool:
     """Alert on important SEC forms when model confidence is high enough."""
     important_forms = {"8-K", "10-Q", "10-K", "S-1", "SC 13G", "SC 13D", "4"}
     try:
         confidence = int(signal.get("confidence", 0))
     except (TypeError, ValueError):
         confidence = 0
-    return form.upper() in important_forms and confidence >= 60
+    threshold = max(60, config.sec_summary_min_confidence)
+    return form.upper() in important_forms and confidence >= threshold
 
 
 def _send_and_log_alert(
@@ -248,6 +291,10 @@ def main() -> None:
     emailer = EmailClient(config)
     inbox_monitor = InboxMonitor(config, ollama, emailer)
     sec_client = SECEdgarClient(config)
+    sec_parser = SECFilingParser(
+        user_agent=config.sec_user_agent,
+        timeout_seconds=config.http_timeout_seconds,
+    )
     ir_monitor = InvestorRelationsMonitor(
         feeds=config.investor_relations_feeds,
         tickers=config.watchlist_tickers,
@@ -282,7 +329,7 @@ def main() -> None:
 
             if config.enable_sec_monitor and now >= next_sec_check:
                 try:
-                    check_sec_and_ir(config, sec_client, ir_monitor, ollama, emailer)
+                    check_sec_and_ir(config, sec_client, sec_parser, ir_monitor, ollama, emailer)
                 except Exception:
                     logger.exception("SEC/IR check failed")
                     log_run_event(config.database_path, "sec_check_error", "SEC/IR check failed")

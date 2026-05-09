@@ -95,6 +95,9 @@ class AppConfig:
     sec_forms_to_track: list[str]
     sec_cik_map: dict[str, str]
     investor_relations_feeds: list[str]
+    enable_sec_text_extraction: bool
+    sec_text_max_chars: int
+    sec_summary_min_confidence: int
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -175,4 +178,7 @@ def load_config() -> AppConfig:
         sec_forms_to_track=forms_to_track,
         sec_cik_map=sec_cik_map,
         investor_relations_feeds=ir_feeds,
+        enable_sec_text_extraction=_get_bool("ENABLE_SEC_TEXT_EXTRACTION", True),
+        sec_text_max_chars=_get_int("SEC_TEXT_MAX_CHARS", 12000),
+        sec_summary_min_confidence=_get_int("SEC_SUMMARY_MIN_CONFIDENCE", 50),
     )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import json
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +86,12 @@ CREATE TABLE IF NOT EXISTS sec_filings (
     filing_url TEXT NOT NULL,
     headline TEXT NOT NULL,
     processed INTEGER DEFAULT 0,
+    filing_text_path TEXT,
+    filing_summary TEXT,
+    filing_key_points TEXT,
+    filing_risks TEXT,
+    text_extracted INTEGER DEFAULT 0,
+    summarized_at TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -103,6 +110,25 @@ def initialize_database(database_path: Path) -> None:
     database_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(database_path) as connection:
         connection.executescript(SCHEMA)
+        _migrate_sec_filings(connection)
+
+
+def _migrate_sec_filings(connection: sqlite3.Connection) -> None:
+    """Add SEC text extraction columns to existing databases."""
+    existing_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(sec_filings);").fetchall()
+    }
+    migrations = {
+        "filing_text_path": "ALTER TABLE sec_filings ADD COLUMN filing_text_path TEXT;",
+        "filing_summary": "ALTER TABLE sec_filings ADD COLUMN filing_summary TEXT;",
+        "filing_key_points": "ALTER TABLE sec_filings ADD COLUMN filing_key_points TEXT;",
+        "filing_risks": "ALTER TABLE sec_filings ADD COLUMN filing_risks TEXT;",
+        "text_extracted": "ALTER TABLE sec_filings ADD COLUMN text_extracted INTEGER DEFAULT 0;",
+        "summarized_at": "ALTER TABLE sec_filings ADD COLUMN summarized_at TEXT;",
+    }
+    for column, sql in migrations.items():
+        if column not in existing_columns:
+            connection.execute(sql)
 
 
 def save_article(database_path: Path, article: Article) -> int | None:
@@ -222,6 +248,43 @@ def mark_sec_filing_processed(database_path: Path, accession: str) -> None:
     """Mark a SEC filing as processed."""
     with sqlite3.connect(database_path) as connection:
         connection.execute("UPDATE sec_filings SET processed = 1 WHERE accession = ?;", (accession,))
+        connection.commit()
+
+
+def update_sec_filing_text_summary(
+    database_path: Path,
+    accession: str,
+    filing_text_path: str | None,
+    summary: dict[str, Any],
+) -> None:
+    """Save extracted SEC text metadata and summary fields."""
+    key_points = summary.get("key_points", [])
+    opportunities = summary.get("potential_opportunities", [])
+    risks = summary.get("potential_risks", [])
+    if opportunities:
+        key_points = [*key_points, *[f"Opportunity: {item}" for item in opportunities]]
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            UPDATE sec_filings
+            SET filing_text_path = ?,
+                filing_summary = ?,
+                filing_key_points = ?,
+                filing_risks = ?,
+                text_extracted = ?,
+                summarized_at = CURRENT_TIMESTAMP
+            WHERE accession = ?;
+            """,
+            (
+                filing_text_path,
+                summary.get("summary", ""),
+                json.dumps(key_points),
+                json.dumps(risks),
+                1 if filing_text_path else 0,
+                accession,
+            ),
+        )
         connection.commit()
 
 
@@ -355,11 +418,34 @@ def get_recent_sec_filings(database_path: Path, lookback_hours: int) -> list[dic
     """Return recent SEC filings for daily reports."""
     sql = """
     SELECT
-        id, ticker, cik, form, accession, filing_date, report_date,
-        primary_document, filing_url, headline, processed, created_at
+        sec_filings.id,
+        sec_filings.ticker,
+        sec_filings.cik,
+        sec_filings.form,
+        sec_filings.accession,
+        sec_filings.filing_date,
+        sec_filings.report_date,
+        sec_filings.primary_document,
+        sec_filings.filing_url,
+        sec_filings.headline,
+        sec_filings.processed,
+        sec_filings.filing_text_path,
+        sec_filings.filing_summary,
+        sec_filings.filing_key_points,
+        sec_filings.filing_risks,
+        sec_filings.text_extracted,
+        sec_filings.summarized_at,
+        sec_filings.created_at,
+        signals.sentiment,
+        signals.confidence,
+        signals.action,
+        signals.urgency,
+        signals.risk_warning
     FROM sec_filings
-    WHERE datetime(created_at) >= datetime('now', ?)
-    ORDER BY filing_date DESC, created_at DESC;
+    LEFT JOIN articles ON articles.url = sec_filings.filing_url
+    LEFT JOIN signals ON signals.article_id = articles.id
+    WHERE datetime(sec_filings.created_at) >= datetime('now', ?)
+    ORDER BY sec_filings.filing_date DESC, sec_filings.created_at DESC;
     """
     keys = [
         "id",
@@ -373,7 +459,18 @@ def get_recent_sec_filings(database_path: Path, lookback_hours: int) -> list[dic
         "filing_url",
         "headline",
         "processed",
+        "filing_text_path",
+        "filing_summary",
+        "filing_key_points",
+        "filing_risks",
+        "text_extracted",
+        "summarized_at",
         "created_at",
+        "sentiment",
+        "confidence",
+        "action",
+        "urgency",
+        "risk_warning",
     ]
     lookback = f"-{int(lookback_hours)} hours"
     with sqlite3.connect(database_path) as connection:

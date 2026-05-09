@@ -53,6 +53,38 @@ class OllamaClient:
 
         return self._normalize_signal(parsed, raw_response)
 
+    def summarize_sec_filing(self, filing: dict[str, Any], filing_text: str) -> dict[str, Any]:
+        """Summarize and classify extracted SEC filing text."""
+        prompt = self._sec_summary_prompt(filing, filing_text)
+        raw_response = self._generate(prompt, json_mode=True)
+        parsed = self._parse_json_response(raw_response)
+
+        if parsed is None:
+            self.logger.warning("Could not parse SEC summary JSON response: %s", raw_response)
+            return {
+                "summary": "SEC filing summary unavailable because the model response could not be parsed.",
+                "key_points": [],
+                "potential_opportunities": [],
+                "potential_risks": ["Manual review needed."],
+                "sentiment": "neutral",
+                "confidence": 0,
+                "action": "ignore",
+                "urgency": "low",
+                "risk_warning": "Model response could not be parsed. Needs manual review.",
+                "raw_model_response": raw_response,
+            }
+
+        signal = self._normalize_signal(parsed, raw_response)
+        summary_text = str(parsed.get("summary", ""))
+        return {
+            **signal,
+            "summary": summary_text,
+            "key_points": self._normalize_list(parsed.get("key_points", [])),
+            "potential_opportunities": self._normalize_list(parsed.get("potential_opportunities", [])),
+            "potential_risks": self._normalize_list(parsed.get("potential_risks", [])),
+            "reason": signal.get("reason") or summary_text,
+        }
+
     def answer_email_reply(self, user_message: str, recent_context: str) -> str:
         """Ask Ollama to answer a user's email reply with a cautious market tone."""
         prompt = f"""
@@ -106,6 +138,44 @@ Source: {article.source}
 Matched symbol: {article.matched_symbol or ""}
 Matched category: {article.matched_category or ""}
 URL: {article.url}
+""".strip()
+
+    def _sec_summary_prompt(self, filing: dict[str, Any], filing_text: str) -> str:
+        """Build the JSON-only SEC filing summary prompt."""
+        return f"""
+You are a conservative primary-source SEC filing analyst. Return only valid JSON.
+
+Allowed JSON shape:
+{{
+  "summary": "",
+  "key_points": [],
+  "potential_opportunities": [],
+  "potential_risks": [],
+  "sentiment": "bullish | bearish | neutral",
+  "confidence": 0,
+  "action": "ignore | watch | possible_buy | possible_sell",
+  "urgency": "low | medium | high",
+  "risk_warning": ""
+}}
+
+Rules:
+- Be conservative.
+- Do not give guaranteed financial advice.
+- Do not say "you should buy".
+- Do not call normal routine filings bullish unless substance supports it.
+- Use possible_buy or possible_sell only when the filing text contains meaningful substance.
+- Use watch when the item matters but needs confirmation.
+- Confidence is 0 to 100.
+
+Filing metadata:
+Ticker: {filing.get("ticker", "")}
+Form: {filing.get("form", "")}
+Filing date: {filing.get("filing_date", "")}
+Report date: {filing.get("report_date", "")}
+URL: {filing.get("filing_url", "")}
+
+Extracted filing text:
+{filing_text}
 """.strip()
 
     def _generate(self, prompt: str, json_mode: bool) -> str:
@@ -178,3 +248,11 @@ URL: {article.url}
             "risk_warning": str(parsed.get("risk_warning", "Needs confirmation.")),
             "raw_model_response": raw_response,
         }
+
+    def _normalize_list(self, value: Any) -> list[str]:
+        """Normalize model list fields."""
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        if value in (None, ""):
+            return []
+        return [str(value)]
