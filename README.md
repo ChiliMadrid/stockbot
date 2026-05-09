@@ -1,0 +1,2 @@
+# stockbot
+stockbot for dad
