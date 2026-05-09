@@ -148,6 +148,8 @@ class AppConfig:
     ipo_alert_min_score: int
     market_data_provider: str
     ipo_feeds: list[str]
+    ipo_calendar_sources: list[str]
+    ipo_manual_csv_path: Path
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -190,6 +192,11 @@ def load_config() -> AppConfig:
     }
     ir_feeds = watchlist.get("investor_relations_feeds", [])
     ipo_feeds = watchlist.get("ipo_feeds", DEFAULT_IPO_FEEDS)
+    ipo_calendar_sources = [
+        source.strip().lower()
+        for source in os.getenv("IPO_CALENDAR_SOURCES", "nasdaq_api,stockanalysis_csv,manual_csv").split(",")
+        if source.strip()
+    ]
     forms_to_track = [
         form.strip().upper()
         for form in os.getenv("SEC_FORMS_TO_TRACK", "8-K,10-Q,10-K,S-1,SC 13G,SC 13D,4").split(",")
@@ -238,6 +245,8 @@ def load_config() -> AppConfig:
         ipo_alert_min_score=_get_int("IPO_ALERT_MIN_SCORE", 70),
         market_data_provider=os.getenv("MARKET_DATA_PROVIDER", "stooq").lower(),
         ipo_feeds=ipo_feeds,
+        ipo_calendar_sources=ipo_calendar_sources,
+        ipo_manual_csv_path=Path(os.getenv("IPO_MANUAL_CSV_PATH", ROOT_DIR / "config" / "ipo_calendar.csv")),
     )
 
 

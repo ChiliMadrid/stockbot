@@ -225,13 +225,17 @@ Rules:
 IPO candidate:
 Company: {ipo.get("company_name", "")}
 Ticker: {ipo.get("ticker", "")}
+Exchange: {ipo.get("exchange", "")}
 IPO date: {ipo.get("ipo_date", "")}
+Expected price range: {ipo.get("expected_price_range", "")}
 Final IPO price: {ipo.get("final_ipo_price", "")}
 Opening price: {ipo.get("opening_price", "")}
 Current price: {ipo.get("current_price", "")}
 Status: {ipo.get("status", "")}
 Source: {ipo.get("source", "")}
+Source quality: {ipo.get("source_quality", "")}/10
 Headline: {ipo.get("headline", "")}
+Notes: {ipo.get("notes", "")}
 URL: {ipo.get("source_url", "")}
 """.strip()
 

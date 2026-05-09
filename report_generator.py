@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import json
 from collections import Counter, defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -88,7 +88,11 @@ def build_report_context(config) -> dict:
         for filing in get_recent_sec_filings(config.database_path, config.daily_report_lookback_hours)
         if _sec_summary_confidence(filing) >= config.sec_summary_min_confidence or not filing.get("filing_summary")
     ]
-    ipos = get_recent_ipos(config.database_path, lookback_hours=24 * max(config.ipo_lookahead_days, 30))
+    ipos = [
+        ipo
+        for ipo in get_recent_ipos(config.database_path, lookback_hours=24 * max(config.ipo_lookahead_days, 30))
+        if _ipo_in_report_window(ipo, config.ipo_lookahead_days)
+    ]
 
     enriched = []
     for signal in signals:
@@ -314,14 +318,30 @@ def _format_ipo_items(ipos: list[dict]) -> list[str]:
     if not ipos:
         return ["- None found."]
     lines = []
-    for ipo in ipos[:12]:
+    upcoming = [ipo for ipo in ipos if ipo.get("status") == "upcoming"]
+    priced_opened = [ipo for ipo in ipos if ipo.get("status") in {"priced", "opened"}]
+    watching = [ipo for ipo in ipos if ipo.get("status") not in {"upcoming", "priced", "opened"}]
+    ordered = [*upcoming, *priced_opened, *watching]
+
+    for ipo in ordered[:12]:
         risks = _json_list(ipo.get("risks"))
         risk_text = "; ".join(risks[:3]) if risks else "needs confirmation"
+        missing_prices = []
+        if ipo.get("status") in {"priced", "opened"} and ipo.get("final_ipo_price") is None:
+            missing_prices.append("missing final IPO price")
+        if ipo.get("status") == "opened" and ipo.get("opening_price") is None:
+            missing_prices.append("missing opening price")
+        if ipo.get("current_price") is None:
+            missing_prices.append("missing current price")
+        warning = f" | Warnings: {'; '.join(missing_prices)}" if missing_prices else ""
         lines.append(
             f"- {ipo.get('ticker') or 'N/A'} | {ipo.get('company_name') or 'N/A'} | "
-            f"{ipo.get('status')} | score {ipo.get('prediction_score') or 0} | "
+            f"{ipo.get('status')} | source quality {ipo.get('source_quality') or 0}/10 | "
+            f"IPO date {ipo.get('ipo_date') or 'N/A'} | range {ipo.get('expected_price_range') or 'N/A'} | "
+            f"final {ipo.get('final_ipo_price') or 'N/A'} | open {ipo.get('opening_price') or 'N/A'} | "
+            f"current {ipo.get('current_price') or 'N/A'} | score {ipo.get('prediction_score') or 0} | "
             f"{ipo.get('expected_direction') or 'uncertain'} | {ipo.get('prediction_summary') or ''} | "
-            f"Risks: {risk_text} | {ipo.get('source_url')}"
+            f"Risks: {risk_text}{warning} | {ipo.get('source_url')}"
         )
     return lines
 
@@ -366,7 +386,9 @@ def _format_ipos_for_prompt(ipos: list[dict]) -> str:
     for ipo in ipos[:20]:
         lines.append(
             f"- ticker={ipo.get('ticker')} | company={ipo.get('company_name')} | "
-            f"status={ipo.get('status')} | ipo_date={ipo.get('ipo_date')} | "
+            f"status={ipo.get('status')} | source={ipo.get('source')} | "
+            f"source_quality={ipo.get('source_quality')} | ipo_date={ipo.get('ipo_date')} | "
+            f"expected_range={ipo.get('expected_price_range')} | exchange={ipo.get('exchange')} | "
             f"final_price={ipo.get('final_ipo_price')} | opening={ipo.get('opening_price')} | "
             f"current={ipo.get('current_price')} | score={ipo.get('prediction_score')} | "
             f"direction={ipo.get('expected_direction')} | action={ipo.get('watch_action')} | "
@@ -446,3 +468,18 @@ def _sec_summary_confidence(filing: dict) -> int:
         return int(filing.get("confidence") or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _ipo_in_report_window(ipo: dict, lookahead_days: int) -> bool:
+    """Include upcoming IPOs inside lookahead and priced/opened IPOs regardless of date."""
+    if ipo.get("status") in {"priced", "opened"}:
+        return True
+    ipo_date = ipo.get("ipo_date")
+    if not ipo_date:
+        return True
+    try:
+        parsed = datetime.strptime(str(ipo_date), "%Y-%m-%d").date()
+    except ValueError:
+        return True
+    today = date.today()
+    return today <= parsed <= today + timedelta(days=lookahead_days)

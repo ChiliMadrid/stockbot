@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import feedparser
@@ -17,6 +16,7 @@ from database import (
     save_or_update_ipo,
 )
 from email_client import EmailClient
+from ipo_calendar_client import IPOCalendarClient
 from market_data_client import MarketDataClient
 from ollama_client import OllamaClient
 
@@ -27,14 +27,18 @@ class IPOCandidate:
 
     company_name: str | None
     ticker: str | None
+    exchange: str | None
     ipo_date: str | None
+    expected_price_range: str | None
     final_ipo_price: float | None
     opening_price: float | None
     current_price: float | None
     source_url: str
     status: str
     source: str
+    source_quality: int
     headline: str
+    notes: str | None
 
 
 class IPOMonitor:
@@ -45,6 +49,7 @@ class IPOMonitor:
         self.ollama = ollama
         self.market_data = market_data
         self.emailer = emailer
+        self.calendar_client = IPOCalendarClient(config)
         self.logger = logging.getLogger(__name__)
 
     def check_ipos(self) -> None:
@@ -66,15 +71,44 @@ class IPOMonitor:
     def _collect_candidates(self) -> list[IPOCandidate]:
         """Collect candidates from configured IPO feeds and SEC S-1 filings."""
         candidates = []
+        candidates.extend(self._from_calendar_sources())
         candidates.extend(self._from_ipo_feeds())
         candidates.extend(self._from_sec_s1_filings())
         return self._dedupe(candidates)
+
+    def _from_calendar_sources(self) -> list[IPOCandidate]:
+        """Load structured IPO calendar candidates."""
+        candidates = []
+        for item in self.calendar_client.fetch_calendar_items():
+            candidates.append(
+                IPOCandidate(
+                    company_name=item.get("company_name"),
+                    ticker=item.get("ticker"),
+                    exchange=item.get("exchange"),
+                    ipo_date=item.get("ipo_date"),
+                    expected_price_range=item.get("expected_price_range"),
+                    final_ipo_price=item.get("final_ipo_price"),
+                    opening_price=item.get("opening_price"),
+                    current_price=item.get("current_price"),
+                    source_url=item.get("source_url", ""),
+                    status=item.get("status", "upcoming"),
+                    source=item.get("source", "ipo_calendar"),
+                    source_quality=int(item.get("source_quality", 5)),
+                    headline=item.get("headline", "IPO calendar item"),
+                    notes=item.get("notes"),
+                )
+            )
+        return candidates
 
     def _from_ipo_feeds(self) -> list[IPOCandidate]:
         """Parse configured IPO RSS/URL sources."""
         candidates = []
         for feed_url in self.config.ipo_feeds:
-            parsed = feedparser.parse(feed_url)
+            try:
+                parsed = feedparser.parse(feed_url)
+            except Exception:
+                self.logger.exception("IPO feed failed: %s", feed_url)
+                continue
             source = parsed.feed.get("title", feed_url) if parsed.feed else feed_url
             for entry in parsed.entries:
                 title = getattr(entry, "title", "").strip()
@@ -86,14 +120,18 @@ class IPOMonitor:
                     IPOCandidate(
                         company_name=self._guess_company(title),
                         ticker=self._guess_ticker(f"{title} {summary}"),
+                        exchange=None,
                         ipo_date=self._guess_date(f"{title} {summary}"),
+                        expected_price_range=None,
                         final_ipo_price=self._guess_price(f"{title} {summary}"),
                         opening_price=None,
                         current_price=None,
                         source_url=link,
                         status=self._guess_status(f"{title} {summary}"),
                         source=source,
+                        source_quality=4,
                         headline=title,
+                        notes=None,
                     )
                 )
         return candidates
@@ -109,14 +147,18 @@ class IPOMonitor:
                 IPOCandidate(
                     company_name=filing.get("ticker"),
                     ticker=filing.get("ticker"),
+                    exchange=None,
                     ipo_date=filing.get("filing_date"),
+                    expected_price_range=None,
                     final_ipo_price=None,
                     opening_price=None,
                     current_price=None,
                     source_url=filing.get("filing_url", ""),
                     status="upcoming",
                     source="SEC EDGAR S-1",
+                    source_quality=10,
                     headline=filing.get("headline", "SEC S-1 filing"),
+                    notes="SEC S-1 filing detected",
                 )
             )
         return candidates
@@ -135,14 +177,18 @@ class IPOMonitor:
         return IPOCandidate(
             company_name=candidate.company_name,
             ticker=candidate.ticker,
+            exchange=candidate.exchange,
             ipo_date=candidate.ipo_date,
+            expected_price_range=candidate.expected_price_range,
             final_ipo_price=candidate.final_ipo_price,
             opening_price=opening_price,
             current_price=current_price,
             source_url=candidate.source_url,
             status=status,
             source=candidate.source,
+            source_quality=candidate.source_quality,
             headline=candidate.headline,
+            notes=candidate.notes,
         )
 
     def _should_alert(self, candidate: IPOCandidate, prediction: dict[str, Any], created: bool, changed: bool) -> bool:
@@ -161,11 +207,14 @@ class IPOMonitor:
             "IPO Watchlist Alert\n\n"
             f"Ticker: {candidate.ticker or 'N/A'}\n"
             f"Company: {candidate.company_name or 'N/A'}\n"
+            f"Exchange: {candidate.exchange or 'N/A'}\n"
             f"Status: {candidate.status}\n"
             f"IPO Date: {candidate.ipo_date or 'N/A'}\n"
+            f"Expected Price Range: {candidate.expected_price_range or 'N/A'}\n"
             f"Final IPO Price: {candidate.final_ipo_price or 'N/A'}\n"
             f"Opening Price: {candidate.opening_price or 'N/A'}\n"
             f"Current Price: {candidate.current_price or 'N/A'}\n"
+            f"Source Quality: {candidate.source_quality}/10\n"
             f"Prediction Score: {prediction.get('prediction_score', 0)}\n"
             f"Expected Direction: {prediction.get('expected_direction', 'uncertain')}\n"
             f"Watch Action: {prediction.get('watch_action', 'watch')}\n"
@@ -181,15 +230,17 @@ class IPOMonitor:
 
     def _dedupe(self, candidates: list[IPOCandidate]) -> list[IPOCandidate]:
         """Deduplicate IPO candidates by URL/ticker/date."""
-        deduped = []
-        seen = set()
+        best: dict[tuple[str, str, str], IPOCandidate] = {}
         for candidate in candidates:
-            key = (candidate.source_url, candidate.ticker, candidate.ipo_date)
-            if key in seen:
-                continue
-            seen.add(key)
-            deduped.append(candidate)
-        return deduped
+            key = (
+                (candidate.ticker or "").upper(),
+                (candidate.company_name or "").lower(),
+                candidate.ipo_date or "",
+            )
+            existing = best.get(key)
+            if existing is None or candidate.source_quality > existing.source_quality:
+                best[key] = candidate
+        return list(best.values())
 
     def _guess_company(self, text: str) -> str | None:
         """Best-effort company name from a headline."""

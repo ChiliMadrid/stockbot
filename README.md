@@ -99,6 +99,8 @@ IPO_CHECK_INTERVAL_SECONDS=3600
 IPO_LOOKAHEAD_DAYS=30
 IPO_ALERT_MIN_SCORE=70
 MARKET_DATA_PROVIDER=stooq
+IPO_CALENDAR_SOURCES=nasdaq_api,stockanalysis_csv,manual_csv
+IPO_MANUAL_CSV_PATH=config/ipo_calendar.csv
 ```
 
 You can also set values directly in Windows PowerShell:
@@ -182,9 +184,38 @@ IPO_CHECK_INTERVAL_SECONDS=3600
 IPO_LOOKAHEAD_DAYS=30
 IPO_ALERT_MIN_SCORE=70
 MARKET_DATA_PROVIDER=stooq
+IPO_CALENDAR_SOURCES=nasdaq_api,stockanalysis_csv,manual_csv
+IPO_MANUAL_CSV_PATH=config/ipo_calendar.csv
 ```
 
-The watchlist supports `ipo_feeds` for configurable IPO RSS/URL sources:
+StockBot loads IPOs from multiple structured or best-effort calendar sources. Source failures are logged and do not stop the app.
+
+Supported `IPO_CALENDAR_SOURCES` values:
+
+- `nasdaq_api`: best-effort Nasdaq IPO calendar API.
+- `stockanalysis_csv`: best-effort StockAnalysis calendar table parser.
+- `manual_csv`: local CSV fallback.
+
+Manual CSV path defaults to:
+
+```text
+config/ipo_calendar.csv
+```
+
+Manual CSV columns:
+
+```text
+company_name,ticker,exchange,ipo_date,expected_price_range,source_url,notes
+```
+
+Example row:
+
+```csv
+company_name,ticker,exchange,ipo_date,expected_price_range,source_url,notes
+Example Robotics,EXRB,NASDAQ,2026-06-15,$18-$20,https://example.com/ipo,Manual test row
+```
+
+The watchlist still supports `ipo_feeds` for additional RSS/URL sources:
 
 ```json
 {
@@ -201,8 +232,28 @@ Quick tests:
 
 ```powershell
 python -c "from config import load_config; c=load_config(); print(c.watchlist_tickers)"
+python -c "from config import load_config; from ipo_calendar_client import IPOCalendarClient; c=load_config(); print(IPOCalendarClient(c).fetch_calendar_items()[:3])"
 python -c "from market_data_client import MarketDataClient; print(MarketDataClient().get_quote('NVDA'))"
 python -c "from config import load_config; from database import initialize_database, get_recent_ipos; c=load_config(); initialize_database(c.database_path); print(get_recent_ipos(c.database_path)[:3])"
+```
+
+Manual CSV ingestion test:
+
+```powershell
+Set-Content -Path config\ipo_calendar.csv -Value "company_name,ticker,exchange,ipo_date,expected_price_range,source_url,notes`nExample Robotics,EXRB,NASDAQ,2026-06-15,`$18-`$20,https://example.com/ipo,Manual test row"
+python -c "from config import load_config; from ipo_calendar_client import IPOCalendarClient; c=load_config(); print(IPOCalendarClient(c).fetch_calendar_items())"
+```
+
+IPO dedupe test:
+
+```powershell
+python -c "from config import load_config; from database import initialize_database, save_or_update_ipo, get_recent_ipos; c=load_config(); initialize_database(c.database_path); ipo={'company_name':'Example Robotics','ticker':'EXRB','exchange':'NASDAQ','ipo_date':'2026-06-15','expected_price_range':'18-20','source_url':'manual:test','source':'manual_csv','source_quality':7,'status':'upcoming'}; p={'prediction_summary':'watch only','prediction_score':71,'expected_direction':'uncertain','watch_action':'watch','key_drivers':[],'risks':['limited data'],'confidence':50}; print(save_or_update_ipo(c.database_path, ipo, p)); print(save_or_update_ipo(c.database_path, {**ipo, 'source_url':'manual:test2', 'source_quality':8}, p)); print([row for row in get_recent_ipos(c.database_path) if row.get('ticker')=='EXRB'])"
+```
+
+Daily report IPO inclusion test:
+
+```powershell
+python -c "from config import load_config; from database import initialize_database; from report_generator import build_report_context; c=load_config(); initialize_database(c.database_path); ctx=build_report_context(c); print(ctx['ipos'][:5])"
 ```
 
 Quick SEC fetch test:

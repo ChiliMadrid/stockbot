@@ -15,6 +15,7 @@
 - Added `sec_filings` SQLite tracking by accession number.
 - Added SEC filing text extraction and primary-source summary generation.
 - Added IPO monitoring with configurable IPO feeds, S-1 candidates, Stooq price checks, email alerts, and daily report output.
+- Added robust IPO calendar ingestion with Nasdaq API, StockAnalysis best-effort parsing, and manual CSV fallback.
 
 ## Current Implemented Features
 
@@ -30,6 +31,7 @@
 - Daily report section for primary-source filings/company updates.
 - SEC filing summaries with extracted text paths, key points, risks, action, and confidence.
 - IPO watchlist rows with prediction summaries, scores, risks, and price checks.
+- IPO source quality tracking, dedupe by ticker/company/date, and missing price warnings in reports.
 - Continuous Windows-compatible main loop with Ctrl+C shutdown.
 
 ## How To Test Email Sending
@@ -83,8 +85,28 @@ Run:
 ```powershell
 python -m compileall .
 python -c "from config import load_config; c=load_config(); print(c.watchlist_tickers)"
+python -c "from config import load_config; from ipo_calendar_client import IPOCalendarClient; c=load_config(); print(IPOCalendarClient(c).fetch_calendar_items()[:3])"
 python -c "from market_data_client import MarketDataClient; print(MarketDataClient().get_quote('NVDA'))"
 python -c "from config import load_config; from database import initialize_database, get_recent_ipos; c=load_config(); initialize_database(c.database_path); print(get_recent_ipos(c.database_path)[:3])"
+```
+
+Manual CSV ingestion:
+
+```powershell
+Set-Content -Path config\ipo_calendar.csv -Value "company_name,ticker,exchange,ipo_date,expected_price_range,source_url,notes`nExample Robotics,EXRB,NASDAQ,2026-06-15,`$18-`$20,https://example.com/ipo,Manual test row"
+python -c "from config import load_config; from ipo_calendar_client import IPOCalendarClient; c=load_config(); print(IPOCalendarClient(c).fetch_calendar_items())"
+```
+
+IPO dedupe:
+
+```powershell
+python -c "from config import load_config; from database import initialize_database, save_or_update_ipo, get_recent_ipos; c=load_config(); initialize_database(c.database_path); ipo={'company_name':'Example Robotics','ticker':'EXRB','exchange':'NASDAQ','ipo_date':'2026-06-15','expected_price_range':'18-20','source_url':'manual:test','source':'manual_csv','source_quality':7,'status':'upcoming'}; p={'prediction_summary':'watch only','prediction_score':71,'expected_direction':'uncertain','watch_action':'watch','key_drivers':[],'risks':['limited data'],'confidence':50}; print(save_or_update_ipo(c.database_path, ipo, p)); print(save_or_update_ipo(c.database_path, {**ipo, 'source_url':'manual:test2', 'source_quality':8}, p)); print([row for row in get_recent_ipos(c.database_path) if row.get('ticker')=='EXRB'])"
+```
+
+Daily report inclusion:
+
+```powershell
+python -c "from config import load_config; from database import initialize_database; from report_generator import build_report_context; c=load_config(); initialize_database(c.database_path); ctx=build_report_context(c); print(ctx['ipos'][:5])"
 ```
 
 For the full monitor path, make sure Ollama is running and `ENABLE_IPO_MONITOR=true`, then run `python main.py`.
@@ -97,7 +119,7 @@ For the full monitor path, make sure Ollama is running and `ENABLE_IPO_MONITOR=t
 - RSS feeds can be delayed, duplicated, or missing key primary-source context.
 - SEC filing text extraction is lightweight and does not parse XBRL tables deeply yet.
 - Investor-relations feeds must be configured manually in `config/watchlist.json`.
-- IPO calendar sources are best-effort; many public IPO pages are HTML pages, not clean RSS feeds.
+- IPO calendar sources are best-effort; public pages/APIs can change shape or block automated requests.
 - Stooq price checks are lightweight and may not cover every suffix, future, or newly listed symbol.
 
 ## Next Recommended Step

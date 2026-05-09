@@ -99,11 +99,15 @@ CREATE TABLE IF NOT EXISTS ipos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     company_name TEXT,
     ticker TEXT,
+    exchange TEXT,
     ipo_date TEXT,
+    expected_price_range TEXT,
     final_ipo_price REAL,
     opening_price REAL,
     current_price REAL,
     source_url TEXT NOT NULL,
+    source TEXT,
+    source_quality INTEGER DEFAULT 0,
     status TEXT NOT NULL,
     prediction_summary TEXT,
     prediction_score INTEGER DEFAULT 0,
@@ -113,6 +117,7 @@ CREATE TABLE IF NOT EXISTS ipos (
     risks TEXT,
     confidence INTEGER DEFAULT 0,
     raw_model_response TEXT,
+    notes TEXT,
     alerted INTEGER DEFAULT 0,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -180,6 +185,11 @@ def _migrate_ipos(connection: sqlite3.Connection) -> None:
         "raw_model_response": "ALTER TABLE ipos ADD COLUMN raw_model_response TEXT;",
         "alerted": "ALTER TABLE ipos ADD COLUMN alerted INTEGER DEFAULT 0;",
         "updated_at": "ALTER TABLE ipos ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP;",
+        "exchange": "ALTER TABLE ipos ADD COLUMN exchange TEXT;",
+        "expected_price_range": "ALTER TABLE ipos ADD COLUMN expected_price_range TEXT;",
+        "source": "ALTER TABLE ipos ADD COLUMN source TEXT;",
+        "source_quality": "ALTER TABLE ipos ADD COLUMN source_quality INTEGER DEFAULT 0;",
+        "notes": "ALTER TABLE ipos ADD COLUMN notes TEXT;",
     }
     for column, sql in migrations.items():
         if column not in existing_columns:
@@ -535,31 +545,39 @@ def get_recent_sec_filings(database_path: Path, lookback_hours: int) -> list[dic
 
 def save_or_update_ipo(database_path: Path, ipo: dict[str, Any], prediction: dict[str, Any]) -> tuple[int, bool, bool]:
     """Insert or update an IPO row. Returns row ID, created flag, and materially changed flag."""
+    company_name = _clean_optional_text(ipo.get("company_name"))
     ticker = _clean_optional_text(ipo.get("ticker"))
     source_url = str(ipo.get("source_url", "")).strip()
     ipo_date = _clean_optional_text(ipo.get("ipo_date"))
     existing = None
     with sqlite3.connect(database_path) as connection:
-        if ticker or ipo_date:
+        if ticker or company_name or ipo_date:
             existing = connection.execute(
                 """
                 SELECT id, final_ipo_price, opening_price, current_price, status, prediction_score
                 FROM ipos
-                WHERE source_url = ? AND COALESCE(ticker, '') = COALESCE(?, '')
-                  AND COALESCE(ipo_date, '') = COALESCE(?, '')
+                WHERE COALESCE(ipo_date, '') = COALESCE(?, '')
+                  AND (
+                    (COALESCE(ticker, '') <> '' AND COALESCE(ticker, '') = COALESCE(?, ''))
+                    OR (COALESCE(company_name, '') <> '' AND lower(COALESCE(company_name, '')) = lower(COALESCE(?, '')))
+                  )
                 LIMIT 1;
                 """,
-                (source_url, ticker, ipo_date),
+                (ipo_date, ticker, company_name),
             ).fetchone()
 
         values = (
-            _clean_optional_text(ipo.get("company_name")),
+            company_name,
             ticker,
+            _clean_optional_text(ipo.get("exchange")),
             ipo_date,
+            _clean_optional_text(ipo.get("expected_price_range")),
             _clean_optional_float(ipo.get("final_ipo_price")),
             _clean_optional_float(ipo.get("opening_price")),
             _clean_optional_float(ipo.get("current_price")),
             source_url,
+            _clean_optional_text(ipo.get("source")),
+            int(ipo.get("source_quality", 0)),
             str(ipo.get("status", "watching")),
             prediction.get("prediction_summary", ""),
             int(prediction.get("prediction_score", 0)),
@@ -569,17 +587,20 @@ def save_or_update_ipo(database_path: Path, ipo: dict[str, Any], prediction: dic
             json.dumps(prediction.get("risks", [])),
             int(prediction.get("confidence", 0)),
             prediction.get("raw_model_response", ""),
+            _clean_optional_text(ipo.get("notes")),
         )
 
         if existing is None:
             cursor = connection.execute(
                 """
                 INSERT OR IGNORE INTO ipos (
-                    company_name, ticker, ipo_date, final_ipo_price, opening_price, current_price,
-                    source_url, status, prediction_summary, prediction_score, expected_direction,
-                    watch_action, key_drivers, risks, confidence, raw_model_response
+                    company_name, ticker, exchange, ipo_date, expected_price_range,
+                    final_ipo_price, opening_price, current_price, source_url, source,
+                    source_quality, status, prediction_summary, prediction_score,
+                    expected_direction, watch_action, key_drivers, risks, confidence,
+                    raw_model_response, notes
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 values,
             )
@@ -591,11 +612,14 @@ def save_or_update_ipo(database_path: Path, ipo: dict[str, Any], prediction: dic
             """
             SELECT id, final_ipo_price, opening_price, current_price, status, prediction_score
             FROM ipos
-            WHERE source_url = ? AND COALESCE(ticker, '') = COALESCE(?, '')
-              AND COALESCE(ipo_date, '') = COALESCE(?, '')
+            WHERE COALESCE(ipo_date, '') = COALESCE(?, '')
+              AND (
+                (COALESCE(ticker, '') <> '' AND COALESCE(ticker, '') = COALESCE(?, ''))
+                OR (COALESCE(company_name, '') <> '' AND lower(COALESCE(company_name, '')) = lower(COALESCE(?, '')))
+              )
             LIMIT 1;
             """,
-            (source_url, ticker, ipo_date),
+            (ipo_date, ticker, company_name),
         ).fetchone()
         if row is None:
             row = connection.execute("SELECT id, final_ipo_price, opening_price, current_price, status, prediction_score FROM ipos WHERE source_url = ? LIMIT 1;", (source_url,)).fetchone()
@@ -608,11 +632,15 @@ def save_or_update_ipo(database_path: Path, ipo: dict[str, Any], prediction: dic
             UPDATE ipos
             SET company_name = ?,
                 ticker = ?,
+                exchange = ?,
                 ipo_date = ?,
+                expected_price_range = ?,
                 final_ipo_price = ?,
                 opening_price = ?,
                 current_price = ?,
                 source_url = ?,
+                source = ?,
+                source_quality = ?,
                 status = ?,
                 prediction_summary = ?,
                 prediction_score = ?,
@@ -622,6 +650,7 @@ def save_or_update_ipo(database_path: Path, ipo: dict[str, Any], prediction: dic
                 risks = ?,
                 confidence = ?,
                 raw_model_response = ?,
+                notes = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?;
             """,
@@ -663,10 +692,11 @@ def mark_ipo_alerted(database_path: Path, ipo_id: int) -> None:
 def get_recent_ipos(database_path: Path, lookback_hours: int = 720) -> list[dict]:
     """Return recent IPO watch rows for reports."""
     sql = """
-    SELECT id, company_name, ticker, ipo_date, final_ipo_price, opening_price,
-           current_price, source_url, status, prediction_summary, prediction_score,
+    SELECT id, company_name, ticker, exchange, ipo_date, expected_price_range,
+           final_ipo_price, opening_price, current_price, source_url, source,
+           source_quality, status, prediction_summary, prediction_score,
            expected_direction, watch_action, key_drivers, risks, confidence,
-           alerted, created_at, updated_at
+           notes, alerted, created_at, updated_at
     FROM ipos
     WHERE datetime(updated_at) >= datetime('now', ?)
        OR status IN ('upcoming', 'priced', 'opened', 'watching')
@@ -677,11 +707,15 @@ def get_recent_ipos(database_path: Path, lookback_hours: int = 720) -> list[dict
         "id",
         "company_name",
         "ticker",
+        "exchange",
         "ipo_date",
+        "expected_price_range",
         "final_ipo_price",
         "opening_price",
         "current_price",
         "source_url",
+        "source",
+        "source_quality",
         "status",
         "prediction_summary",
         "prediction_score",
@@ -690,6 +724,7 @@ def get_recent_ipos(database_path: Path, lookback_hours: int = 720) -> list[dict
         "key_drivers",
         "risks",
         "confidence",
+        "notes",
         "alerted",
         "created_at",
         "updated_at",
