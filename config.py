@@ -159,6 +159,7 @@ class AppConfig:
     enable_dashboard_export: bool
     dashboard_export_interval_seconds: int
     dashboard_dir: Path
+    dashboard_include_charts: bool
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -265,6 +266,7 @@ def load_config() -> AppConfig:
         enable_dashboard_export=_get_bool("ENABLE_DASHBOARD_EXPORT", True),
         dashboard_export_interval_seconds=_get_int("DASHBOARD_EXPORT_INTERVAL_SECONDS", 1800),
         dashboard_dir=Path(os.getenv("STOCKBOT_DASHBOARD_DIR", ROOT_DIR / "reports" / "dashboard")),
+        dashboard_include_charts=_get_bool("DASHBOARD_INCLUDE_CHARTS", True),
     )
 
 

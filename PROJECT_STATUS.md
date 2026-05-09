@@ -19,6 +19,7 @@
 - Added diagnostics and health checks through `health_check.py` and `python main.py --health`.
 - Added price/volume confirmation, final signal scoring, alert performance tracking, email watchlist commands, and upgraded morning brief sections.
 - Added broker-free dashboard exports with offline HTML and CSV files under `reports/dashboard/`.
+- Added offline dashboard charts and `dashboard_summary.json`.
 
 ## Current Implemented Features
 
@@ -40,6 +41,7 @@
 - Alert outcome tracking for 1h, 4h, 1d, and 5d horizons.
 - Email commands for showing/updating tickers and categories.
 - Scheduled dashboard export for watchlists, latest signals, final scores, price/volume confirmations, IPOs, SEC/IR updates, signal performance, and top risks.
+- Static dashboard charts for score trend, ticker counts, action counts, price/volume summary, alert performance, IPO statuses, and SEC filing forms.
 - Continuous Windows-compatible main loop with Ctrl+C shutdown.
 
 ## How To Test Email Sending
@@ -129,6 +131,7 @@ python -c "from config import load_config; from database import initialize_datab
 
 ```powershell
 python dashboard_exporter.py
+start reports\dashboard\dashboard_latest.html
 python -c "from config import load_config; from dashboard_exporter import export_dashboard; c=load_config(); print(export_dashboard(c)['dashboard_latest'])"
 ```
 
@@ -167,4 +170,4 @@ For the full monitor path, make sure Ollama is running and `ENABLE_IPO_MONITOR=t
 
 ## Next Recommended Step
 
-Add price/volume visualization and dashboard trend charts without broker integration.
+Add local desktop tray/status controls.

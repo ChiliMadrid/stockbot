@@ -40,12 +40,14 @@ def export_dashboard(config: AppConfig | None = None) -> dict[str, Path]:
     performance = get_recent_signal_outcomes(config.database_path, PERFORMANCE_LOOKBACK_HOURS)
     watchlist = build_watchlist_summary(config, signals)
     risks = build_top_risks(signals, sec_filings, ipos)
+    summary = build_dashboard_summary(signals, price_confirmations, ipos, sec_filings, performance)
 
     paths = {
         "watchlist_summary": config.dashboard_dir / "watchlist_summary.csv",
         "signals_latest": config.dashboard_dir / "signals_latest.csv",
         "ipo_watchlist": config.dashboard_dir / "ipo_watchlist.csv",
         "signal_performance": config.dashboard_dir / "signal_performance.csv",
+        "dashboard_summary": config.dashboard_dir / "dashboard_summary.json",
         "dashboard_latest": config.dashboard_dir / "dashboard_latest.html",
     }
 
@@ -53,11 +55,43 @@ def export_dashboard(config: AppConfig | None = None) -> dict[str, Path]:
     _write_csv(paths["signals_latest"], _signal_rows(signals))
     _write_csv(paths["ipo_watchlist"], _ipo_rows(ipos))
     _write_csv(paths["signal_performance"], performance)
-    _write_html(paths["dashboard_latest"], watchlist, signals, price_confirmations, ipos, sec_filings, performance, risks)
+    _write_json(paths["dashboard_summary"], summary)
+    _write_html(
+        paths["dashboard_latest"],
+        watchlist,
+        signals,
+        price_confirmations,
+        ipos,
+        sec_filings,
+        performance,
+        risks,
+        summary,
+        config.dashboard_include_charts,
+    )
 
     log_run_event(config.database_path, "dashboard_exported", f"Dashboard exported to {paths['dashboard_latest']}")
     logging.getLogger(__name__).info("Dashboard exported to %s", paths["dashboard_latest"])
     return paths
+
+
+def build_dashboard_summary(
+    signals: list[dict[str, Any]],
+    price_confirmations: list[dict[str, Any]],
+    ipos: list[dict[str, Any]],
+    sec_filings: list[dict[str, Any]],
+    performance: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build aggregate chart data for JSON and HTML dashboard rendering."""
+    return {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "final_signal_score_trend": _score_trend(signals),
+        "signal_count_by_ticker": _count_by(signals, "matched_symbol", limit=15),
+        "action_counts": _count_by(signals, "action"),
+        "price_volume_confirmation_summary": _price_confirmation_summary(price_confirmations),
+        "alert_performance_summary": _performance_summary(performance),
+        "ipo_status_counts": _count_by(ipos, "status"),
+        "sec_filing_form_counts": _count_by(sec_filings, "form"),
+    }
 
 
 def build_watchlist_summary(config: AppConfig, signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -162,6 +196,80 @@ def build_top_risks(
     return sorted(rows, key=lambda row: _safe_int(row.get("score")), reverse=True)[:25]
 
 
+def _score_trend(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Average final score by signal date for a compact trend chart."""
+    buckets: dict[str, list[int]] = {}
+    for signal in signals:
+        created_at = str(signal.get("signal_created_at") or signal.get("created_at") or "")
+        bucket = created_at[:10] if len(created_at) >= 10 else "unknown"
+        score = _safe_int(signal.get("final_signal_score") or signal.get("confidence"))
+        buckets.setdefault(bucket, []).append(score)
+
+    rows = []
+    for bucket in sorted(buckets):
+        scores = buckets[bucket]
+        rows.append(
+            {
+                "period": bucket,
+                "average_final_score": round(sum(scores) / max(len(scores), 1), 1),
+                "signal_count": len(scores),
+            }
+        )
+    return rows[-14:]
+
+
+def _count_by(rows: list[dict[str, Any]], key: str, limit: int | None = None) -> list[dict[str, Any]]:
+    """Count non-empty values in a row list."""
+    counts: dict[str, int] = {}
+    for row in rows:
+        value = row.get(key)
+        if value is None or value == "":
+            value = "unknown"
+        label = str(value).upper() if key in {"matched_symbol", "form"} else str(value).lower()
+        counts[label] = counts.get(label, 0) + 1
+    sorted_counts = sorted(counts.items(), key=lambda item: item[1], reverse=True)
+    if limit is not None:
+        sorted_counts = sorted_counts[:limit]
+    return [{"label": label, "count": count} for label, count in sorted_counts]
+
+
+def _price_confirmation_summary(price_confirmations: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize price/volume confirmation state."""
+    total = len(price_confirmations)
+    confirmed = sum(1 for row in price_confirmations if _safe_int(row.get("trend_confirmed")) == 1)
+    scores = [_safe_int(row.get("price_volume_score")) for row in price_confirmations]
+    final_scores = [_safe_int(row.get("final_signal_score")) for row in price_confirmations]
+    return {
+        "total_checks": total,
+        "trend_confirmed": confirmed,
+        "not_confirmed": max(total - confirmed, 0),
+        "average_price_volume_score": round(sum(scores) / max(len(scores), 1), 1) if scores else 0,
+        "average_final_signal_score": round(sum(final_scores) / max(len(final_scores), 1), 1) if final_scores else 0,
+    }
+
+
+def _performance_summary(performance: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize checked alert outcomes."""
+    by_outcome: dict[str, int] = {}
+    by_horizon: dict[str, int] = {}
+    changes = []
+    for row in performance:
+        outcome = str(row.get("outcome") or "unknown").lower()
+        horizon = str(row.get("horizon") or "unknown").lower()
+        by_outcome[outcome] = by_outcome.get(outcome, 0) + 1
+        by_horizon[horizon] = by_horizon.get(horizon, 0) + 1
+        try:
+            changes.append(float(row.get("percent_change") or 0))
+        except (TypeError, ValueError):
+            continue
+    return {
+        "total_checked": len(performance),
+        "by_outcome": [{"label": key, "count": value} for key, value in sorted(by_outcome.items())],
+        "by_horizon": [{"label": key, "count": value} for key, value in sorted(by_horizon.items())],
+        "average_percent_change": round(sum(changes) / max(len(changes), 1), 2) if changes else 0,
+    }
+
+
 def _enrich_signals(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Add source score and verification labels for dashboard use."""
     enriched = []
@@ -260,6 +368,12 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
             writer.writerow({"status": "no rows"})
 
 
+def _write_json(path: Path, data: dict[str, Any]) -> None:
+    """Write dashboard summary JSON."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=True), encoding="utf-8")
+
+
 def _write_html(
     path: Path,
     watchlist: list[dict[str, Any]],
@@ -269,11 +383,15 @@ def _write_html(
     sec_filings: list[dict[str, Any]],
     performance: list[dict[str, Any]],
     risks: list[dict[str, Any]],
+    summary: dict[str, Any],
+    include_charts: bool,
 ) -> None:
     """Write the offline HTML dashboard."""
     generated_at = datetime.now().isoformat(timespec="seconds")
+    charts = _charts_section(summary) if include_charts else ""
     body = "\n".join(
         [
+            charts,
             _section("Watchlist Summary", watchlist[:80]),
             _section("Latest Signals", _signal_rows(signals[:50])),
             _section("Price/Volume Confirmations", price_confirmations[:50]),
@@ -355,6 +473,57 @@ def _write_html(
     a {{
       color: #8ecfff;
     }}
+    .chart-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+    }}
+    .chart {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      padding: 14px;
+    }}
+    .chart h3 {{
+      margin: 0 0 12px;
+      font-size: 14px;
+      color: var(--text);
+    }}
+    .bar-row {{
+      display: grid;
+      grid-template-columns: minmax(78px, 130px) 1fr 48px;
+      gap: 8px;
+      align-items: center;
+      margin: 8px 0;
+    }}
+    .bar-label, .bar-value {{
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }}
+    .bar-track {{
+      height: 12px;
+      background: #222831;
+      border: 1px solid var(--line);
+    }}
+    .bar-fill {{
+      height: 100%;
+      background: var(--accent);
+    }}
+    .metric-row {{
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      margin: 8px 0;
+      color: var(--muted);
+    }}
+    svg {{
+      display: block;
+      width: 100%;
+      height: 180px;
+      background: #12161b;
+      border: 1px solid var(--line);
+    }}
   </style>
 </head>
 <body>
@@ -373,6 +542,145 @@ def _write_html(
 def _section(title: str, rows: list[dict[str, Any]]) -> str:
     """Render one HTML table section."""
     return f"<h2>{html.escape(title)}</h2>\n{_table(rows)}"
+
+
+def _charts_section(summary: dict[str, Any]) -> str:
+    """Render dashboard charts with inline SVG and CSS-only bars."""
+    return "\n".join(
+        [
+            "<h2>Dashboard Charts</h2>",
+            '<div class="chart-grid">',
+            _line_chart(
+                "Final Signal Score Trend",
+                summary.get("final_signal_score_trend", []),
+                "period",
+                "average_final_score",
+            ),
+            _bar_chart("Signal Count By Ticker", summary.get("signal_count_by_ticker", [])),
+            _bar_chart("Buy/Watch/Sell Action Counts", summary.get("action_counts", [])),
+            _metrics_chart(
+                "Price/Volume Confirmation Summary",
+                summary.get("price_volume_confirmation_summary", {}),
+            ),
+            _performance_chart("Alert Performance Summary", summary.get("alert_performance_summary", {})),
+            _bar_chart("IPO Status Counts", summary.get("ipo_status_counts", [])),
+            _bar_chart("SEC Filing Form Counts", summary.get("sec_filing_form_counts", [])),
+            "</div>",
+        ]
+    )
+
+
+def _line_chart(title: str, rows: list[dict[str, Any]], label_key: str, value_key: str) -> str:
+    """Render a small inline SVG line chart."""
+    if not rows:
+        return _empty_chart(title)
+    values = [float(row.get(value_key) or 0) for row in rows]
+    max_value = max(max(values), 1)
+    width = 520
+    height = 180
+    pad = 24
+    step = (width - pad * 2) / max(len(values) - 1, 1)
+    points = []
+    for index, value in enumerate(values):
+        x = pad + index * step
+        y = height - pad - ((value / max_value) * (height - pad * 2))
+        points.append((x, y))
+    point_string = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
+    circles = "".join(
+        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" fill="#6ec6a4"><title>{html.escape(str(rows[index].get(label_key)))}: {values[index]:.1f}</title></circle>'
+        for index, (x, y) in enumerate(points)
+    )
+    labels = "".join(
+        f'<text x="{x:.1f}" y="170" fill="#9aa7b4" font-size="10" text-anchor="middle">{html.escape(str(rows[index].get(label_key))[-5:])}</text>'
+        for index, (x, _) in enumerate(points)
+        if index == 0 or index == len(points) - 1 or len(points) <= 6
+    )
+    return (
+        f'<div class="chart"><h3>{html.escape(title)}</h3>'
+        f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="{html.escape(title)}">'
+        f'<polyline points="{point_string}" fill="none" stroke="#6ec6a4" stroke-width="3"/>'
+        f'{circles}{labels}</svg></div>'
+    )
+
+
+def _bar_chart(title: str, rows: list[dict[str, Any]]) -> str:
+    """Render a CSS bar chart from label/count rows."""
+    if not rows:
+        return _empty_chart(title)
+    max_count = max(_safe_int(row.get("count")) for row in rows) or 1
+    bars = []
+    for row in rows[:12]:
+        label = str(row.get("label") or "unknown")
+        count = _safe_int(row.get("count"))
+        width = max((count / max_count) * 100, 2)
+        bars.append(
+            '<div class="bar-row">'
+            f'<div class="bar-label">{html.escape(label)}</div>'
+            f'<div class="bar-track"><div class="bar-fill" style="width:{width:.1f}%"></div></div>'
+            f'<div class="bar-value">{count}</div>'
+            '</div>'
+        )
+    return f'<div class="chart"><h3>{html.escape(title)}</h3>{"".join(bars)}</div>'
+
+
+def _metrics_chart(title: str, metrics: dict[str, Any]) -> str:
+    """Render a compact metric panel."""
+    if not metrics:
+        return _empty_chart(title)
+    rows = "".join(
+        f'<div class="metric-row"><span>{html.escape(str(key).replace("_", " ").title())}</span><strong>{html.escape(str(value))}</strong></div>'
+        for key, value in metrics.items()
+    )
+    return f'<div class="chart"><h3>{html.escape(title)}</h3>{rows}</div>'
+
+
+def _performance_chart(title: str, summary: dict[str, Any]) -> str:
+    """Render performance metrics and outcome bars."""
+    if not summary:
+        return _empty_chart(title)
+    metrics = {
+        "total_checked": summary.get("total_checked", 0),
+        "average_percent_change": summary.get("average_percent_change", 0),
+    }
+    return (
+        '<div class="chart">'
+        f'<h3>{html.escape(title)}</h3>'
+        f'{_metrics_inner(metrics)}'
+        f'{_bars_inner(summary.get("by_outcome", []))}'
+        '</div>'
+    )
+
+
+def _metrics_inner(metrics: dict[str, Any]) -> str:
+    """Render metrics without an outer chart wrapper."""
+    return "".join(
+        f'<div class="metric-row"><span>{html.escape(str(key).replace("_", " ").title())}</span><strong>{html.escape(str(value))}</strong></div>'
+        for key, value in metrics.items()
+    )
+
+
+def _bars_inner(rows: list[dict[str, Any]]) -> str:
+    """Render bars without an outer chart wrapper."""
+    if not rows:
+        return ""
+    max_count = max(_safe_int(row.get("count")) for row in rows) or 1
+    bars = []
+    for row in rows:
+        count = _safe_int(row.get("count"))
+        width = max((count / max_count) * 100, 2)
+        bars.append(
+            '<div class="bar-row">'
+            f'<div class="bar-label">{html.escape(str(row.get("label") or "unknown"))}</div>'
+            f'<div class="bar-track"><div class="bar-fill" style="width:{width:.1f}%"></div></div>'
+            f'<div class="bar-value">{count}</div>'
+            '</div>'
+        )
+    return "".join(bars)
+
+
+def _empty_chart(title: str) -> str:
+    """Render an empty chart placeholder."""
+    return f'<div class="chart"><h3>{html.escape(title)}</h3><div class="meta">No data yet</div></div>'
 
 
 def _table(rows: list[dict[str, Any]]) -> str:

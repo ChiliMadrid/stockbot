@@ -111,6 +111,7 @@ MORNING_BRIEF_MODE=true
 
 ENABLE_DASHBOARD_EXPORT=true
 DASHBOARD_EXPORT_INTERVAL_SECONDS=1800
+DASHBOARD_INCLUDE_CHARTS=true
 ```
 
 You can also set values directly in Windows PowerShell:
@@ -130,6 +131,7 @@ $env:SEC_USER_AGENT="StockBot/0.1 contact:madridchili96@gmail.com"
 $env:ENABLE_SEC_TEXT_EXTRACTION="true"
 $env:ENABLE_IPO_MONITOR="true"
 $env:ENABLE_DASHBOARD_EXPORT="true"
+$env:DASHBOARD_INCLUDE_CHARTS="true"
 ```
 
 ## Run
@@ -212,6 +214,7 @@ StockBot can export a broker-free local dashboard on a schedule. It writes offli
 ```text
 ENABLE_DASHBOARD_EXPORT=true
 DASHBOARD_EXPORT_INTERVAL_SECONDS=1800
+DASHBOARD_INCLUDE_CHARTS=true
 ```
 
 Generated files:
@@ -222,9 +225,10 @@ reports/dashboard/watchlist_summary.csv
 reports/dashboard/signals_latest.csv
 reports/dashboard/ipo_watchlist.csv
 reports/dashboard/signal_performance.csv
+reports/dashboard/dashboard_summary.json
 ```
 
-The HTML dashboard uses a simple dark theme and table sections for watchlist summary, latest signals, final scores, price/volume confirmations, IPO watchlist, SEC/IR updates, signal performance, and top risks/unverified items.
+The HTML dashboard uses a simple dark theme, table sections, and inline offline charts. Charts include final signal score trend, signal count by ticker, action counts, price/volume confirmation summary, alert performance summary, IPO status counts, and SEC filing form counts. Set `DASHBOARD_INCLUDE_CHARTS=false` to keep the HTML tables-only.
 
 For simple email support, `EmailClient.send_dashboard_link()` can send the local dashboard path to `EMAIL_TO`; attachments are not required for the default workflow.
 
@@ -232,6 +236,7 @@ Manually export the dashboard:
 
 ```powershell
 python dashboard_exporter.py
+start reports\dashboard\dashboard_latest.html
 ```
 
 Test through the Python API:
@@ -508,6 +513,7 @@ Dashboard exports:
 ```text
 reports/dashboard/dashboard_latest.html
 reports/dashboard/*.csv
+reports/dashboard/dashboard_summary.json
 ```
 
 Local secrets in `.env`, SQLite files, and log files are ignored by git.

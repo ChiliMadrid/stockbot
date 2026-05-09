@@ -11,4 +11,5 @@ reports/*.md
 reports/sec_filings/*.txt
 reports/dashboard/*.csv
 reports/dashboard/*.html
+reports/dashboard/*.json
 !reports/dashboard/.gitkeep
