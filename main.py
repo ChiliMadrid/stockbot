@@ -1,23 +1,84 @@
-"""Application entry point for the local stock intelligence system."""
+"""Main loop for the local email-based StockBot system."""
 
 from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime
 
 from config import AppConfig, load_config
-from database import initialize_database, save_article_analysis
+from database import (
+    initialize_database,
+    log_run_event,
+    save_article,
+    save_email_message,
+    save_signal,
+    signal_already_exists,
+)
+from email_client import EmailClient, format_signal_alert_body, format_signal_alert_subject
+from inbox_monitor import InboxMonitor
 from ollama_client import OllamaClient
 from rss_monitor import RSSMonitor
-from telegram_alerts import TelegramAlertClient
-from utils import configure_logging, is_important_signal
+from utils import configure_logging, should_send_signal_alert
 
 
-def run_once(config: AppConfig) -> None:
-    """Poll feeds once, analyze matched items, store results, and send alerts."""
+def check_news(config: AppConfig, rss_monitor: RSSMonitor, ollama: OllamaClient, emailer: EmailClient) -> None:
+    """Poll RSS feeds, classify new matches, save signals, and email important alerts."""
+    logger = logging.getLogger(__name__)
+    logger.info("Checking RSS/news feeds")
+    log_run_event(config.database_path, "news_check_started", "Started RSS/news check")
+
+    articles = rss_monitor.poll()
+    logger.info("Matched %s article(s)", len(articles))
+
+    for article in articles:
+        if signal_already_exists(config.database_path, article.url):
+            logger.debug("Skipping already processed URL: %s", article.url)
+            continue
+
+        article_id = save_article(config.database_path, article)
+        if article_id is None:
+            continue
+
+        signal = ollama.classify_headline(article)
+        signal_id = save_signal(config.database_path, article_id, signal)
+        signal["id"] = signal_id
+        signal["headline"] = article.headline
+        signal["url"] = article.url
+        signal["source"] = article.source
+        signal["matched_symbol"] = article.matched_symbol
+        signal["matched_category"] = article.matched_category
+        signal["created_at"] = datetime.now().isoformat(timespec="seconds")
+
+        if should_send_signal_alert(signal):
+            sent = emailer.send_signal_alert(signal)
+            save_email_message(
+                config.database_path,
+                direction="outbound",
+                from_address=config.email_address or "",
+                to_address=config.email_to or "",
+                subject=format_signal_alert_subject(signal),
+                body=format_signal_alert_body(signal),
+                related_signal_id=signal_id,
+                processed=sent,
+            )
+            log_run_event(
+                config.database_path,
+                "email_alert_sent" if sent else "email_alert_skipped",
+                f"Signal {signal_id}: {article.headline}",
+            )
+
+    log_run_event(config.database_path, "news_check_finished", "Finished RSS/news check")
+
+
+def main() -> None:
+    """Run StockBot until interrupted."""
+    config = load_config()
+    configure_logging(config.log_file)
     logger = logging.getLogger(__name__)
 
     initialize_database(config.database_path)
+    log_run_event(config.database_path, "startup", "StockBot started")
 
     rss_monitor = RSSMonitor(
         feeds=config.rss_feeds,
@@ -29,58 +90,38 @@ def run_once(config: AppConfig) -> None:
         model=config.ollama_model,
         timeout_seconds=config.http_timeout_seconds,
     )
-    telegram = TelegramAlertClient(
-        bot_token=config.telegram_bot_token,
-        chat_id=config.telegram_chat_id,
-        enabled=config.telegram_enabled,
-    )
+    emailer = EmailClient(config)
+    inbox_monitor = InboxMonitor(config, ollama, emailer)
 
-    logger.info("Polling RSS feeds")
-    articles = rss_monitor.poll()
-    logger.info("Matched %s article(s)", len(articles))
+    next_news_check = 0.0
+    next_email_check = 0.0
 
-    for article in articles:
-        logger.info("Analyzing article: %s", article.title)
-        analysis = ollama.analyze_headline(article)
-        article_id = save_article_analysis(config.database_path, article, analysis)
+    logger.info("StockBot running. Press Ctrl+C to stop.")
 
-        if is_important_signal(analysis, config.alert_score_threshold):
-            message = (
-                f"Stock intelligence alert\n\n"
-                f"Ticker(s): {', '.join(article.matched_tickers) or 'N/A'}\n"
-                f"Sentiment: {analysis.get('sentiment', 'unknown')}\n"
-                f"Importance: {analysis.get('importance_score', 'unknown')}\n"
-                f"Title: {article.title}\n"
-                f"URL: {article.link}\n"
-                f"Database ID: {article_id}"
-            )
-            telegram.send_message(message)
+    try:
+        while True:
+            now = time.monotonic()
 
+            if now >= next_news_check:
+                try:
+                    check_news(config, rss_monitor, ollama, emailer)
+                except Exception:
+                    logger.exception("News check failed")
+                    log_run_event(config.database_path, "news_check_error", "News check failed")
+                next_news_check = now + config.news_check_interval_seconds
 
-def main() -> None:
-    """Run the stock intelligence worker."""
-    config = load_config()
-    configure_logging(config.log_file)
-    logger = logging.getLogger(__name__)
+            if config.enable_inbox_monitor and now >= next_email_check:
+                try:
+                    inbox_monitor.check_inbox()
+                except Exception:
+                    logger.exception("Inbox check failed")
+                    log_run_event(config.database_path, "inbox_check_error", "Inbox check failed")
+                next_email_check = now + config.email_check_interval_seconds
 
-    logger.info("Starting local stock intelligence system")
-
-    if config.poll_once:
-        run_once(config)
-        logger.info("Finished one-shot run")
-        return
-
-    while True:
-        try:
-            run_once(config)
-        except KeyboardInterrupt:
-            logger.info("Shutdown requested by user")
-            break
-        except Exception:
-            logger.exception("Unexpected error during polling cycle")
-
-        logger.info("Sleeping for %s seconds", config.poll_interval_seconds)
-        time.sleep(config.poll_interval_seconds)
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("Shutdown requested by user")
+        log_run_event(config.database_path, "shutdown", "StockBot stopped by user")
 
 
 if __name__ == "__main__":

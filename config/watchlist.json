@@ -1,9 +1,28 @@
 {
-  "tickers": ["AAPL", "MSFT", "NVDA", "TSLA", "SPY", "QQQ"],
-  "categories": ["earnings", "guidance", "fed", "inflation", "ai", "chips", "semiconductor"],
+  "tickers": ["NVDA", "AMD", "TSLA", "MSFT", "AAPL", "PLTR", "SMCI", "GOOGL", "META", "AVGO"],
+  "categories": [
+    "artificial intelligence",
+    "semiconductor",
+    "chips",
+    "data center",
+    "GLP-1",
+    "obesity drug",
+    "defense",
+    "energy",
+    "interest rates",
+    "inflation",
+    "earnings",
+    "guidance"
+  ],
   "rss_feeds": [
-    "https://feeds.marketwatch.com/marketwatch/topstories/",
-    "https://www.investing.com/rss/news.rss",
-    "https://finance.yahoo.com/news/rssindex"
+    "https://finance.yahoo.com/rss/headline?s=NVDA",
+    "https://finance.yahoo.com/rss/headline?s=TSLA",
+    "https://finance.yahoo.com/rss/headline?s=AMD",
+    "https://finance.yahoo.com/rss/headline?s=MSFT",
+    "https://finance.yahoo.com/rss/headline?s=AAPL",
+    "https://finance.yahoo.com/rss/headline?s=META",
+    "https://finance.yahoo.com/rss/headline?s=GOOGL",
+    "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+    "https://feeds.marketwatch.com/marketwatch/topstories/"
   ]
 }

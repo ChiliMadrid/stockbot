@@ -1,11 +1,10 @@
-"""Shared utility functions."""
+"""Shared utilities for StockBot."""
 
 from __future__ import annotations
 
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any
 
 
 def configure_logging(log_file: Path) -> None:
@@ -26,12 +25,12 @@ def configure_logging(log_file: Path) -> None:
     logging.basicConfig(level=logging.INFO, handlers=[file_handler, console_handler], force=True)
 
 
-def is_important_signal(analysis: dict[str, Any], threshold: int) -> bool:
-    """Return True when an analysis should trigger an alert."""
+def should_send_signal_alert(signal: dict) -> bool:
+    """Return True when a signal qualifies for an email alert."""
+    action = str(signal.get("action", "")).lower()
     try:
-        importance_score = int(analysis.get("importance_score", 0))
+        confidence = int(signal.get("confidence", 0))
     except (TypeError, ValueError):
-        importance_score = 0
+        confidence = 0
 
-    action = str(analysis.get("action", "")).lower()
-    return importance_score >= threshold or action == "alert"
+    return action in {"possible_buy", "possible_sell"} and confidence >= 70

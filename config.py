@@ -1,4 +1,4 @@
-"""Configuration loading for the local stock intelligence system."""
+"""Configuration for the local email-based StockBot system."""
 
 from __future__ import annotations
 
@@ -8,15 +8,47 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+
 
 ROOT_DIR = Path(__file__).resolve().parent
 CONFIG_DIR = ROOT_DIR / "config"
 DEFAULT_WATCHLIST_PATH = CONFIG_DIR / "watchlist.json"
 
 
+DEFAULT_RSS_FEEDS = [
+    "https://finance.yahoo.com/rss/headline?s=NVDA",
+    "https://finance.yahoo.com/rss/headline?s=TSLA",
+    "https://finance.yahoo.com/rss/headline?s=AMD",
+    "https://finance.yahoo.com/rss/headline?s=MSFT",
+    "https://finance.yahoo.com/rss/headline?s=AAPL",
+    "https://finance.yahoo.com/rss/headline?s=META",
+    "https://finance.yahoo.com/rss/headline?s=GOOGL",
+    "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+    "https://feeds.marketwatch.com/marketwatch/topstories/",
+]
+
+DEFAULT_TICKERS = ["NVDA", "AMD", "TSLA", "MSFT", "AAPL", "PLTR", "SMCI", "GOOGL", "META", "AVGO"]
+
+DEFAULT_CATEGORIES = [
+    "artificial intelligence",
+    "semiconductor",
+    "chips",
+    "data center",
+    "GLP-1",
+    "obesity drug",
+    "defense",
+    "energy",
+    "interest rates",
+    "inflation",
+    "earnings",
+    "guidance",
+]
+
+
 @dataclass(frozen=True)
 class AppConfig:
-    """Runtime configuration values."""
+    """Runtime settings loaded from .env, environment variables, and JSON config."""
 
     database_path: Path
     log_file: Path
@@ -24,42 +56,55 @@ class AppConfig:
     watchlist_tickers: list[str]
     watchlist_categories: list[str]
     rss_feeds: list[str]
-    ollama_url: str
     ollama_model: str
-    telegram_bot_token: str | None
-    telegram_chat_id: str | None
-    telegram_enabled: bool
-    poll_interval_seconds: int
-    poll_once: bool
+    ollama_url: str
+    email_address: str | None
+    email_app_password: str | None
+    smtp_host: str
+    smtp_port: int
+    imap_host: str
+    imap_port: int
+    email_to: str | None
+    enable_inbox_monitor: bool
+    email_check_interval_seconds: int
+    news_check_interval_seconds: int
     http_timeout_seconds: int
-    alert_score_threshold: int
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    """Read a JSON file and return an empty dictionary when it is missing."""
+    """Read JSON config when present."""
     if not path.exists():
         return {}
-
     with path.open("r", encoding="utf-8") as file:
         return json.load(file)
 
 
 def _get_bool(name: str, default: bool) -> bool:
-    """Read a boolean from an environment variable."""
+    """Read a boolean value from the environment."""
     value = os.getenv(name)
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _get_int(name: str, default: int) -> int:
+    """Read an integer value from the environment."""
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
 def load_config() -> AppConfig:
-    """Load configuration from environment variables and the watchlist file."""
+    """Load StockBot configuration."""
+    load_dotenv()
+
     watchlist_path = Path(os.getenv("STOCKBOT_WATCHLIST_PATH", DEFAULT_WATCHLIST_PATH))
     watchlist = _read_json(watchlist_path)
 
-    tickers = [ticker.upper() for ticker in watchlist.get("tickers", [])]
-    categories = [category.lower() for category in watchlist.get("categories", [])]
-    feeds = watchlist.get("rss_feeds", [])
+    tickers = [ticker.upper() for ticker in watchlist.get("tickers", DEFAULT_TICKERS)]
+    categories = [category.lower() for category in watchlist.get("categories", DEFAULT_CATEGORIES)]
+    feeds = watchlist.get("rss_feeds", DEFAULT_RSS_FEEDS)
 
     return AppConfig(
         database_path=Path(os.getenv("STOCKBOT_DATABASE_PATH", ROOT_DIR / "database" / "stockbot.sqlite3")),
@@ -68,13 +113,17 @@ def load_config() -> AppConfig:
         watchlist_tickers=tickers,
         watchlist_categories=categories,
         rss_feeds=feeds,
+        ollama_model=os.getenv("OLLAMA_MODEL", "qwen2.5:3b"),
         ollama_url=os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate"),
-        ollama_model=os.getenv("OLLAMA_MODEL", "llama3.1"),
-        telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN"),
-        telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID"),
-        telegram_enabled=_get_bool("TELEGRAM_ENABLED", False),
-        poll_interval_seconds=int(os.getenv("STOCKBOT_POLL_INTERVAL_SECONDS", "900")),
-        poll_once=_get_bool("STOCKBOT_POLL_ONCE", True),
-        http_timeout_seconds=int(os.getenv("STOCKBOT_HTTP_TIMEOUT_SECONDS", "30")),
-        alert_score_threshold=int(os.getenv("STOCKBOT_ALERT_SCORE_THRESHOLD", "7")),
+        email_address=os.getenv("EMAIL_ADDRESS"),
+        email_app_password=os.getenv("EMAIL_APP_PASSWORD"),
+        smtp_host=os.getenv("SMTP_HOST", "smtp.gmail.com"),
+        smtp_port=_get_int("SMTP_PORT", 587),
+        imap_host=os.getenv("IMAP_HOST", "imap.gmail.com"),
+        imap_port=_get_int("IMAP_PORT", 993),
+        email_to=os.getenv("EMAIL_TO") or os.getenv("EMAIL_ADDRESS"),
+        enable_inbox_monitor=_get_bool("ENABLE_INBOX_MONITOR", True),
+        email_check_interval_seconds=_get_int("EMAIL_CHECK_INTERVAL_SECONDS", 120),
+        news_check_interval_seconds=_get_int("NEWS_CHECK_INTERVAL_SECONDS", 300),
+        http_timeout_seconds=_get_int("STOCKBOT_HTTP_TIMEOUT_SECONDS", 30),
     )
