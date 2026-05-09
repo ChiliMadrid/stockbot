@@ -45,12 +45,19 @@ class MarketDataClient:
         row = rows[0]
         close = self._parse_float(row.get("Close"))
         open_price = self._parse_float(row.get("Open"))
+        volume = self._parse_float(row.get("Volume"))
+        percent_move = None
+        if close is not None and open_price:
+            percent_move = ((close - open_price) / open_price) * 100
         return {
             "provider": self.provider,
             "ticker": ticker,
             "symbol": symbol,
             "opening_price": open_price,
             "current_price": close,
+            "prior_close": None,
+            "percent_move": percent_move,
+            "volume": volume,
         }
 
     def _to_stooq_symbol(self, ticker: str) -> str:

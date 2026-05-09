@@ -9,11 +9,13 @@ from datetime import datetime
 
 from config import AppConfig, load_config
 from database import (
+    create_signal_outcome_rows,
     initialize_database,
     log_run_event,
     mark_sec_filing_processed,
     save_article,
     save_email_message,
+    save_price_confirmation,
     save_sec_filing,
     save_signal,
     sec_filing_exists,
@@ -26,10 +28,12 @@ from investor_relations_monitor import InvestorRelationsMonitor
 from ipo_monitor import IPOMonitor
 from market_data_client import MarketDataClient
 from ollama_client import OllamaClient
+from performance_tracker import PerformanceTracker
 from report_generator import generate_daily_report, record_daily_report, should_send_daily_report
 from rss_monitor import Article, RSSMonitor
 from sec_edgar_client import SECEdgarClient
 from sec_filing_parser import SECFilingParser
+from signal_scoring import build_price_confirmation, final_signal_score
 from utils import configure_logging, should_send_signal_alert
 
 
@@ -42,7 +46,13 @@ def run_health_mode() -> int:
     return 1 if has_failures(results) else 0
 
 
-def check_news(config: AppConfig, rss_monitor: RSSMonitor, ollama: OllamaClient, emailer: EmailClient) -> None:
+def check_news(
+    config: AppConfig,
+    rss_monitor: RSSMonitor,
+    ollama: OllamaClient,
+    emailer: EmailClient,
+    market_data: MarketDataClient,
+) -> None:
     """Poll RSS feeds, classify new matches, save signals, and email important alerts."""
     logger = logging.getLogger(__name__)
     logger.info("Checking RSS/news feeds")
@@ -70,25 +80,26 @@ def check_news(config: AppConfig, rss_monitor: RSSMonitor, ollama: OllamaClient,
         signal["matched_category"] = article.matched_category
         signal["created_at"] = datetime.now().isoformat(timespec="seconds")
 
-        if should_send_signal_alert(signal):
-            sent = emailer.send_signal_alert(signal)
-            save_email_message(
-                config.database_path,
-                direction="outbound",
-                from_address=config.email_address or "",
-                to_address=config.email_to or "",
-                subject=format_signal_alert_subject(signal),
-                body=format_signal_alert_body(signal),
-                related_signal_id=signal_id,
-                processed=sent,
-            )
-            log_run_event(
-                config.database_path,
-                "email_alert_sent" if sent else "email_alert_skipped",
-                f"Signal {signal_id}: {article.headline}",
-            )
+        signal = score_signal(config, market_data, signal_id, signal)
+
+        if should_send_signal_alert(signal) and int(signal.get("final_signal_score", 0)) >= config.alert_final_score_min:
+            _send_and_log_alert(config, emailer, signal, signal_id, "email_alert")
 
     log_run_event(config.database_path, "news_check_finished", "Finished RSS/news check")
+
+
+def score_signal(config: AppConfig, market_data: MarketDataClient, signal_id: int, signal: dict) -> dict:
+    """Attach price confirmation and final score to a signal."""
+    if not config.enable_price_confirmation:
+        signal["final_signal_score"] = signal.get("confidence", 0)
+        return signal
+    quote = market_data.get_quote(signal.get("matched_symbol"))
+    confirmation = build_price_confirmation(signal, quote)
+    score = final_signal_score(signal, confirmation)
+    save_price_confirmation(config.database_path, signal_id, confirmation, score)
+    signal.update(confirmation)
+    signal.update(score)
+    return signal
 
 
 def check_sec_and_ir(
@@ -98,6 +109,7 @@ def check_sec_and_ir(
     ir_monitor: InvestorRelationsMonitor,
     ollama: OllamaClient,
     emailer: EmailClient,
+    market_data: MarketDataClient,
 ) -> None:
     """Poll SEC EDGAR and investor-relations feeds as primary-source inputs."""
     logger = logging.getLogger(__name__)
@@ -119,6 +131,7 @@ def check_sec_and_ir(
             if stored_signal is not None:
                 signal_id, signal_data = stored_signal
                 signal = _signal_for_alert_payload(signal_id, article, signal_data)
+                signal = score_signal(config, market_data, signal_id, signal)
                 if _should_send_sec_alert(config, filing["form"], signal):
                     _send_and_log_alert(config, emailer, signal, signal_id, "sec_alert")
 
@@ -131,7 +144,8 @@ def check_sec_and_ir(
             continue
         signal_id = save_signal(config.database_path, article_id, signal)
         signal_payload = _signal_for_alert_payload(signal_id, article, signal)
-        if should_send_signal_alert(signal_payload) or int(signal_payload.get("confidence", 0)) >= 60:
+        signal_payload = score_signal(config, market_data, signal_id, signal_payload)
+        if int(signal_payload.get("final_signal_score", 0)) >= config.alert_final_score_min:
             _send_and_log_alert(config, emailer, signal_payload, signal_id, "ir_alert")
 
     log_run_event(config.database_path, "sec_check_finished", "Finished SEC/IR check")
@@ -226,11 +240,11 @@ def _should_send_sec_alert(config: AppConfig, form: str, signal: dict) -> bool:
     """Alert on important SEC forms when model confidence is high enough."""
     important_forms = {"8-K", "10-Q", "10-K", "S-1", "SC 13G", "SC 13D", "4"}
     try:
-        confidence = int(signal.get("confidence", 0))
+        score = int(signal.get("final_signal_score", 0))
     except (TypeError, ValueError):
-        confidence = 0
-    threshold = max(60, config.sec_summary_min_confidence)
-    return form.upper() in important_forms and confidence >= threshold
+        score = 0
+    threshold = max(config.alert_final_score_min, config.sec_summary_min_confidence)
+    return form.upper() in important_forms and score >= threshold
 
 
 def _send_and_log_alert(
@@ -257,6 +271,20 @@ def _send_and_log_alert(
         f"{event_type}_sent" if sent else f"{event_type}_skipped",
         f"Signal {signal_id}: {signal.get('headline', '')}",
     )
+    if sent and config.enable_performance_tracking:
+        create_signal_outcome_rows(
+            config.database_path,
+            signal_id,
+            signal.get("matched_symbol"),
+            signal.get("current_price"),
+        )
+
+
+def check_performance(config: AppConfig, tracker: PerformanceTracker) -> None:
+    """Update due alert outcome checks."""
+    updated = tracker.check_outcomes()
+    if updated:
+        log_run_event(config.database_path, "performance_updated", f"Updated {updated} outcome row(s)")
 
 
 def check_daily_report(config: AppConfig, ollama: OllamaClient, emailer: EmailClient) -> None:
@@ -315,6 +343,7 @@ def main() -> None:
         provider=config.market_data_provider,
         timeout_seconds=config.http_timeout_seconds,
     )
+    performance_tracker = PerformanceTracker(config, market_data)
     ipo_monitor = IPOMonitor(config, ollama, market_data, emailer)
     sec_client = SECEdgarClient(config)
     sec_parser = SECFilingParser(
@@ -331,6 +360,7 @@ def main() -> None:
     next_email_check = 0.0
     next_sec_check = 0.0
     next_ipo_check = 0.0
+    next_performance_check = 0.0
 
     logger.info("StockBot running. Press Ctrl+C to stop.")
 
@@ -340,7 +370,7 @@ def main() -> None:
 
             if now >= next_news_check:
                 try:
-                    check_news(config, rss_monitor, ollama, emailer)
+                    check_news(config, rss_monitor, ollama, emailer, market_data)
                 except Exception:
                     logger.exception("News check failed")
                     log_run_event(config.database_path, "news_check_error", "News check failed")
@@ -356,7 +386,7 @@ def main() -> None:
 
             if config.enable_sec_monitor and now >= next_sec_check:
                 try:
-                    check_sec_and_ir(config, sec_client, sec_parser, ir_monitor, ollama, emailer)
+                    check_sec_and_ir(config, sec_client, sec_parser, ir_monitor, ollama, emailer, market_data)
                 except Exception:
                     logger.exception("SEC/IR check failed")
                     log_run_event(config.database_path, "sec_check_error", "SEC/IR check failed")
@@ -369,6 +399,14 @@ def main() -> None:
                     logger.exception("IPO check failed")
                     log_run_event(config.database_path, "ipo_check_error", "IPO check failed")
                 next_ipo_check = now + config.ipo_check_interval_seconds
+
+            if config.enable_performance_tracking and now >= next_performance_check:
+                try:
+                    check_performance(config, performance_tracker)
+                except Exception:
+                    logger.exception("Performance tracking failed")
+                    log_run_event(config.database_path, "performance_error", "Performance tracking failed")
+                next_performance_check = now + config.performance_check_interval_seconds
 
             try:
                 check_daily_report(config, ollama, emailer)

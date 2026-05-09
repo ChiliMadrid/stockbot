@@ -53,7 +53,8 @@ class EmailClient:
         label = signal.get("matched_symbol") or signal.get("matched_category") or "Market"
         action = signal.get("action", "watch")
         confidence = int(signal.get("confidence", 0))
-        subject = f"StockBot Alert — {label} {action} {confidence}%"
+        score = int(signal.get("final_signal_score") or confidence)
+        subject = f"StockBot Alert - {label} {action} score {score}"
         body = format_signal_alert_body(signal)
         return self.send_email(subject, body)
 
@@ -73,7 +74,8 @@ def format_signal_alert_subject(signal: dict) -> str:
     label = signal.get("matched_symbol") or signal.get("matched_category") or "Market"
     action = signal.get("action", "watch")
     confidence = int(signal.get("confidence", 0))
-    return f"StockBot Alert — {label} {action} {confidence}%"
+    score = int(signal.get("final_signal_score") or confidence)
+    return f"StockBot Alert - {label} {action} score {score}"
 
 
 def format_signal_alert_body(signal: dict) -> str:
@@ -87,6 +89,12 @@ def format_signal_alert_body(signal: dict) -> str:
             f"Sentiment: {signal.get('sentiment', '')}\n"
             f"Action: {action}\n"
             f"Confidence: {confidence}%\n"
+            f"Final Score: {signal.get('final_signal_score', 'N/A')}\n"
+            f"Source Score: {signal.get('source_score', 'N/A')}\n"
+            f"Price/Volume Score: {signal.get('price_volume_score', 'N/A')}\n"
+            f"Risk Penalty: {signal.get('risk_penalty', 'N/A')}\n"
+            f"Current Price: {signal.get('current_price', 'N/A')}\n"
+            f"Percent Move: {signal.get('percent_move', 'N/A')}\n"
             f"Urgency: {signal.get('urgency', '')}\n"
             f"Reason: {signal.get('reason', '')}\n"
             f"Risk Warning: {signal.get('risk_warning', '')}\n"

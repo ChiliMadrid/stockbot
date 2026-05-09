@@ -136,6 +136,42 @@ CREATE TABLE IF NOT EXISTS ipo_price_checks (
     FOREIGN KEY(ipo_id) REFERENCES ipos(id)
 );
 
+CREATE TABLE IF NOT EXISTS price_confirmations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_id INTEGER NOT NULL,
+    ticker TEXT,
+    current_price REAL,
+    prior_close REAL,
+    percent_move REAL,
+    volume REAL,
+    gap_percent REAL,
+    trend_confirmed INTEGER DEFAULT 0,
+    provider TEXT,
+    model_confidence INTEGER DEFAULT 0,
+    source_score INTEGER DEFAULT 0,
+    price_volume_score INTEGER DEFAULT 0,
+    risk_penalty INTEGER DEFAULT 0,
+    final_signal_score INTEGER DEFAULT 0,
+    checked_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(signal_id) REFERENCES signals(id)
+);
+
+CREATE TABLE IF NOT EXISTS signal_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_id INTEGER NOT NULL,
+    ticker TEXT,
+    horizon TEXT NOT NULL,
+    alert_price REAL,
+    future_price REAL,
+    percent_change REAL,
+    outcome TEXT,
+    due_at TEXT NOT NULL,
+    checked_at TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(signal_id, horizon),
+    FOREIGN KEY(signal_id) REFERENCES signals(id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_articles_url ON articles(url);
 CREATE INDEX IF NOT EXISTS idx_signals_confidence ON signals(confidence);
 CREATE INDEX IF NOT EXISTS idx_email_messages_created_at ON email_messages(created_at);
@@ -146,6 +182,8 @@ CREATE INDEX IF NOT EXISTS idx_sec_filings_created_at ON sec_filings(created_at)
 CREATE INDEX IF NOT EXISTS idx_ipos_status ON ipos(status);
 CREATE INDEX IF NOT EXISTS idx_ipos_ipo_date ON ipos(ipo_date);
 CREATE INDEX IF NOT EXISTS idx_ipo_price_checks_checked_at ON ipo_price_checks(checked_at);
+CREATE INDEX IF NOT EXISTS idx_price_confirmations_signal_id ON price_confirmations(signal_id);
+CREATE INDEX IF NOT EXISTS idx_signal_outcomes_due_at ON signal_outcomes(due_at);
 """
 
 
@@ -249,6 +287,99 @@ def save_signal(database_path: Path, article_id: int, signal: dict[str, Any]) ->
         )
         connection.commit()
         return int(cursor.lastrowid)
+
+
+def save_price_confirmation(
+    database_path: Path,
+    signal_id: int,
+    confirmation: dict[str, Any],
+    score: dict[str, int],
+) -> int:
+    """Save price confirmation and scoring details."""
+    with sqlite3.connect(database_path) as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO price_confirmations (
+                signal_id, ticker, current_price, prior_close, percent_move, volume,
+                gap_percent, trend_confirmed, provider, model_confidence, source_score,
+                price_volume_score, risk_penalty, final_signal_score
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            (
+                signal_id,
+                confirmation.get("ticker"),
+                _clean_optional_float(confirmation.get("current_price")),
+                _clean_optional_float(confirmation.get("prior_close")),
+                _clean_optional_float(confirmation.get("percent_move")),
+                _clean_optional_float(confirmation.get("volume")),
+                _clean_optional_float(confirmation.get("gap_percent")),
+                1 if confirmation.get("trend_confirmed") else 0,
+                confirmation.get("provider", ""),
+                score.get("model_confidence", 0),
+                score.get("source_score", 0),
+                score.get("price_volume_score", 0),
+                score.get("risk_penalty", 0),
+                score.get("final_signal_score", 0),
+            ),
+        )
+        connection.commit()
+        return int(cursor.lastrowid)
+
+
+def create_signal_outcome_rows(database_path: Path, signal_id: int, ticker: str | None, alert_price: float | None) -> None:
+    """Create future outcome rows for an alerted signal."""
+    horizons = {
+        "1h": "+1 hours",
+        "4h": "+4 hours",
+        "1d": "+1 days",
+        "5d": "+5 days",
+    }
+    with sqlite3.connect(database_path) as connection:
+        for horizon, offset in horizons.items():
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO signal_outcomes (signal_id, ticker, horizon, alert_price, due_at)
+                VALUES (?, ?, ?, ?, datetime('now', ?));
+                """,
+                (signal_id, ticker, alert_price, horizon, offset),
+            )
+        connection.commit()
+
+
+def get_due_signal_outcomes(database_path: Path) -> list[dict]:
+    """Return due signal outcomes that have not been checked."""
+    sql = """
+    SELECT id, signal_id, ticker, horizon, alert_price, due_at
+    FROM signal_outcomes
+    WHERE checked_at IS NULL AND datetime(due_at) <= datetime('now')
+    ORDER BY due_at ASC
+    LIMIT 100;
+    """
+    keys = ["id", "signal_id", "ticker", "horizon", "alert_price", "due_at"]
+    with sqlite3.connect(database_path) as connection:
+        rows = connection.execute(sql).fetchall()
+    return [dict(zip(keys, row)) for row in rows]
+
+
+def update_signal_outcome(
+    database_path: Path,
+    outcome_id: int,
+    future_price: float | None,
+    percent_change: float | None,
+    outcome: str,
+) -> None:
+    """Update a signal outcome row."""
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            UPDATE signal_outcomes
+            SET future_price = ?, percent_change = ?, outcome = ?, checked_at = CURRENT_TIMESTAMP
+            WHERE id = ?;
+            """,
+            (future_price, percent_change, outcome, outcome_id),
+        )
+        connection.commit()
 
 
 def signal_already_exists(database_path: Path, url: str) -> bool:
@@ -446,9 +577,25 @@ def get_recent_signals(database_path: Path, lookback_hours: int, min_confidence:
         signals.reason,
         signals.risk_warning,
         signals.raw_model_response,
-        signals.created_at
+        signals.created_at,
+        pc.current_price,
+        pc.percent_move,
+        pc.volume,
+        pc.trend_confirmed,
+        pc.final_signal_score,
+        pc.price_volume_score,
+        pc.risk_penalty
     FROM signals
     JOIN articles ON articles.id = signals.article_id
+    LEFT JOIN (
+        SELECT *
+        FROM price_confirmations
+        WHERE id IN (
+            SELECT MAX(id)
+            FROM price_confirmations
+            GROUP BY signal_id
+        )
+    ) pc ON pc.signal_id = signals.id
     WHERE signals.confidence >= ?
       AND datetime(signals.created_at) >= datetime('now', ?)
     ORDER BY signals.confidence DESC, signals.created_at DESC;
@@ -475,7 +622,56 @@ def get_recent_signals(database_path: Path, lookback_hours: int, min_confidence:
         "risk_warning",
         "raw_model_response",
         "signal_created_at",
+        "current_price",
+        "percent_move",
+        "volume",
+        "trend_confirmed",
+        "final_signal_score",
+        "price_volume_score",
+        "risk_penalty",
     ]
+    return [dict(zip(keys, row)) for row in rows]
+
+
+def get_recent_price_confirmations(database_path: Path, lookback_hours: int = 24) -> list[dict]:
+    """Return recent price confirmations."""
+    sql = """
+    SELECT signal_id, ticker, current_price, percent_move, volume, trend_confirmed,
+           price_volume_score, risk_penalty, final_signal_score, checked_at
+    FROM price_confirmations
+    WHERE datetime(checked_at) >= datetime('now', ?)
+    ORDER BY final_signal_score DESC, checked_at DESC
+    LIMIT 50;
+    """
+    keys = [
+        "signal_id",
+        "ticker",
+        "current_price",
+        "percent_move",
+        "volume",
+        "trend_confirmed",
+        "price_volume_score",
+        "risk_penalty",
+        "final_signal_score",
+        "checked_at",
+    ]
+    with sqlite3.connect(database_path) as connection:
+        rows = connection.execute(sql, (f"-{int(lookback_hours)} hours",)).fetchall()
+    return [dict(zip(keys, row)) for row in rows]
+
+
+def get_recent_signal_outcomes(database_path: Path, lookback_hours: int = 168) -> list[dict]:
+    """Return recent checked signal outcomes."""
+    sql = """
+    SELECT signal_id, ticker, horizon, alert_price, future_price, percent_change, outcome, checked_at
+    FROM signal_outcomes
+    WHERE checked_at IS NOT NULL AND datetime(checked_at) >= datetime('now', ?)
+    ORDER BY checked_at DESC
+    LIMIT 50;
+    """
+    keys = ["signal_id", "ticker", "horizon", "alert_price", "future_price", "percent_change", "outcome", "checked_at"]
+    with sqlite3.connect(database_path) as connection:
+        rows = connection.execute(sql, (f"-{int(lookback_hours)} hours",)).fetchall()
     return [dict(zip(keys, row)) for row in rows]
 
 

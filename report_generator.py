@@ -12,8 +12,10 @@ from typing import Any
 from database import (
     daily_report_already_sent,
     get_recent_ipos,
+    get_recent_price_confirmations,
     get_recent_sec_filings,
     get_recent_signals,
+    get_recent_signal_outcomes,
     save_daily_report_record,
 )
 from source_verifier import explain_verification, label_verification, score_source
@@ -93,6 +95,8 @@ def build_report_context(config) -> dict:
         for ipo in get_recent_ipos(config.database_path, lookback_hours=24 * max(config.ipo_lookahead_days, 30))
         if _ipo_in_report_window(ipo, config.ipo_lookahead_days)
     ]
+    price_confirmations = get_recent_price_confirmations(config.database_path, config.daily_report_lookback_hours)
+    signal_outcomes = get_recent_signal_outcomes(config.database_path)
 
     enriched = []
     for signal in signals:
@@ -118,6 +122,8 @@ def build_report_context(config) -> dict:
         "signals": ranked,
         "primary_source_filings": sec_filings,
         "ipos": ipos,
+        "price_confirmations": price_confirmations,
+        "signal_outcomes": signal_outcomes,
         "groups": dict(groups),
         "trending": Counter(_signal_group(signal) for signal in ranked).most_common(10),
         "verification_counts": dict(labels),
@@ -179,28 +185,25 @@ SEC Filing Summaries:
 IPO Watchlist:
 {_format_ipos_for_prompt(context["ipos"])}
 
-Required sections:
+Price/volume confirmations:
+{_format_confirmations_for_prompt(context["price_confirmations"])}
+
+Signal performance review:
+{_format_outcomes_for_prompt(context["signal_outcomes"])}
+
+Required morning brief sections:
 1. Title: Daily StockBot Market Intelligence Report
 2. Date/time generated
-3. Executive summary
-4. Highest-confidence possible buy watches
-5. Highest-confidence possible sell watches
-6. Trending tickers/categories
-7. Confirmed items
-8. Partially confirmed items
-9. Rumors/unverified items
-10. Risk notes
-11. Source notes
+3. Market setup
+4. Top watchlist movers
+5. SEC/IR updates
+6. IPO Watchlist
+7. Highest confidence signals
+8. Price/volume confirmations
+9. Signal performance review
+10. Unverified rumors
+11. Risk notes
 12. Reminder: "This report is decision-support only, not financial advice."
-
-Also include a short section named:
-Primary-source filings/company updates
-
-Also include a short section named:
-SEC Filing Summaries
-
-Also include a short section named:
-IPO Watchlist
 
 Tone rules:
 - Direct and practical.
@@ -230,6 +233,12 @@ def _build_fallback_report(context: dict) -> str:
         f"- Reviewed {len(signals)} signal(s) from the last {context['lookback_hours']} hour(s).",
         "- Treat this as a watchlist and risk-monitoring report, not a trading instruction.",
         "",
+        "Market setup",
+        "- Review index, sector, and liquidity context before acting on any single signal.",
+        "",
+        "Top watchlist movers",
+        *_format_confirmation_items(context["price_confirmations"][:10]),
+        "",
         "Primary-source filings/company updates",
         *_format_primary_source_items(context["primary_source_filings"]),
         "",
@@ -239,11 +248,14 @@ def _build_fallback_report(context: dict) -> str:
         "IPO Watchlist",
         *_format_ipo_items(context["ipos"]),
         "",
-        "Highest-confidence possible buy watches",
-        *_format_section_items(buys),
+        "Highest confidence signals",
+        *_format_section_items([*buys, *sells][:10]),
         "",
-        "Highest-confidence possible sell watches",
-        *_format_section_items(sells),
+        "Price/volume confirmations",
+        *_format_confirmation_items(context["price_confirmations"]),
+        "",
+        "Signal performance review",
+        *_format_outcome_items(context["signal_outcomes"]),
         "",
         "Trending tickers/categories",
         *[f"- {label}: {count} signal(s)" for label, count in context["trending"]],
@@ -254,7 +266,7 @@ def _build_fallback_report(context: dict) -> str:
         "Partially confirmed items",
         *_format_section_items(partial),
         "",
-        "Rumors/unverified items",
+        "Unverified rumors",
         *_format_section_items(rumors),
         "",
         "Risk notes",
@@ -396,6 +408,43 @@ def _format_ipos_for_prompt(ipos: list[dict]) -> str:
             f"url={ipo.get('source_url')}"
         )
     return "\n".join(lines)
+
+
+def _format_confirmation_items(confirmations: list[dict]) -> list[str]:
+    """Format price confirmations."""
+    if not confirmations:
+        return ["- None available yet."]
+    return [
+        (
+            f"- {row.get('ticker') or 'N/A'} | price {row.get('current_price') or 'N/A'} | "
+            f"move {row.get('percent_move') or 'N/A'}% | trend_confirmed={bool(row.get('trend_confirmed'))} | "
+            f"final score {row.get('final_signal_score') or 0}"
+        )
+        for row in confirmations[:12]
+    ]
+
+
+def _format_outcome_items(outcomes: list[dict]) -> list[str]:
+    """Format signal performance outcomes."""
+    if not outcomes:
+        return ["- No completed alert outcome checks yet."]
+    return [
+        (
+            f"- {row.get('ticker') or 'N/A'} | {row.get('horizon')} | "
+            f"{row.get('percent_change') or 'N/A'}% | {row.get('outcome')}"
+        )
+        for row in outcomes[:12]
+    ]
+
+
+def _format_confirmations_for_prompt(confirmations: list[dict]) -> str:
+    """Format confirmations for Ollama."""
+    return "\n".join(_format_confirmation_items(confirmations))
+
+
+def _format_outcomes_for_prompt(outcomes: list[dict]) -> str:
+    """Format outcomes for Ollama."""
+    return "\n".join(_format_outcome_items(outcomes))
 
 
 def _format_signals_for_prompt(signals: list[dict]) -> str:

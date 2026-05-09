@@ -101,6 +101,13 @@ IPO_ALERT_MIN_SCORE=70
 MARKET_DATA_PROVIDER=stooq
 IPO_CALENDAR_SOURCES=nasdaq_api,stockanalysis_csv,manual_csv
 IPO_MANUAL_CSV_PATH=config/ipo_calendar.csv
+
+ENABLE_PRICE_CONFIRMATION=true
+PRICE_CHECK_INTERVAL_SECONDS=300
+ALERT_FINAL_SCORE_MIN=80
+ENABLE_PERFORMANCE_TRACKING=true
+PERFORMANCE_CHECK_INTERVAL_SECONDS=900
+MORNING_BRIEF_MODE=true
 ```
 
 You can also set values directly in Windows PowerShell:
@@ -146,6 +153,53 @@ Filtered Python syntax check:
 $files = Get-ChildItem -Path . -Recurse -Filter *.py -File | Where-Object { $_.FullName -notmatch '\\.git\\|\\.venv\\|\\logs\\|\\database\\|\\reports\\' } | ForEach-Object { $_.FullName }
 python -m py_compile @files
 ```
+
+## Signal Scoring And Performance
+
+StockBot can confirm signals with lightweight price/volume data, calculate a final score, and track alert outcomes.
+
+```text
+ENABLE_PRICE_CONFIRMATION=true
+PRICE_CHECK_INTERVAL_SECONDS=300
+ALERT_FINAL_SCORE_MIN=80
+ENABLE_PERFORMANCE_TRACKING=true
+PERFORMANCE_CHECK_INTERVAL_SECONDS=900
+MORNING_BRIEF_MODE=true
+```
+
+Final signal score:
+
+```text
+final_signal_score = model_confidence + source_score + price_volume_score - risk_penalty
+```
+
+Email alerts are sent only when the final score is at least `ALERT_FINAL_SCORE_MIN`. Alert performance is tracked at `1h`, `4h`, `1d`, and `5d` horizons.
+
+Test scoring:
+
+```powershell
+python -c "from signal_scoring import build_price_confirmation, final_signal_score; s={'confidence':70,'action':'possible_buy','sentiment':'bullish','source':'SEC EDGAR','matched_symbol':'NVDA'}; q={'current_price':100,'opening_price':98,'percent_move':2.04,'volume':1000000,'provider':'test'}; c=build_price_confirmation(s,q); print(c); print(final_signal_score(s,c))"
+```
+
+Test performance tracking:
+
+```powershell
+python -c "from config import load_config; from database import initialize_database, create_signal_outcome_rows, get_due_signal_outcomes; c=load_config(); initialize_database(c.database_path); create_signal_outcome_rows(c.database_path, 1, 'NVDA', 100); print(get_due_signal_outcomes(c.database_path))"
+```
+
+## Email Watchlist Commands
+
+Reply to a StockBot alert or report email with one command on the first line:
+
+```text
+watchlist show
+watchlist add NVDA
+watchlist remove NVDA
+category add artificial intelligence
+category remove artificial intelligence
+```
+
+The commands update `config/watchlist.json`, deduplicate values, and normalize tickers to uppercase while preserving suffix/futures forms such as `LUMI.ST` and `SIL=F`.
 
 ## SEC EDGAR And Investor Relations
 

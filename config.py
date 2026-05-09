@@ -150,6 +150,12 @@ class AppConfig:
     ipo_feeds: list[str]
     ipo_calendar_sources: list[str]
     ipo_manual_csv_path: Path
+    enable_price_confirmation: bool
+    price_check_interval_seconds: int
+    alert_final_score_min: int
+    enable_performance_tracking: bool
+    performance_check_interval_seconds: int
+    morning_brief_mode: bool
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -247,6 +253,12 @@ def load_config() -> AppConfig:
         ipo_feeds=ipo_feeds,
         ipo_calendar_sources=ipo_calendar_sources,
         ipo_manual_csv_path=Path(os.getenv("IPO_MANUAL_CSV_PATH", ROOT_DIR / "config" / "ipo_calendar.csv")),
+        enable_price_confirmation=_get_bool("ENABLE_PRICE_CONFIRMATION", True),
+        price_check_interval_seconds=_get_int("PRICE_CHECK_INTERVAL_SECONDS", 300),
+        alert_final_score_min=_get_int("ALERT_FINAL_SCORE_MIN", 80),
+        enable_performance_tracking=_get_bool("ENABLE_PERFORMANCE_TRACKING", True),
+        performance_check_interval_seconds=_get_int("PERFORMANCE_CHECK_INTERVAL_SECONDS", 900),
+        morning_brief_mode=_get_bool("MORNING_BRIEF_MODE", True),
     )
 
 

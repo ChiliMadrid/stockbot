@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import email
 import imaplib
+import json
 import logging
 from email.header import decode_header
 from email.message import Message
@@ -87,8 +88,12 @@ class InboxMonitor:
             processed=False,
         )
 
-        context = get_recent_conversation_context(self.config.database_path)
-        bot_response = self.ollama.answer_email_reply(body, context)
+        command_response = self._handle_watchlist_command(body)
+        if command_response:
+            bot_response = command_response
+        else:
+            context = get_recent_conversation_context(self.config.database_path)
+            bot_response = self.ollama.answer_email_reply(body, context)
         sent = self.emailer.send_chatbot_reply(subject, bot_response, from_address)
 
         save_chatbot_conversation(self.config.database_path, email_message_id, body, bot_response)
@@ -148,3 +153,68 @@ class InboxMonitor:
         if payload:
             return payload.decode(message.get_content_charset() or "utf-8", errors="replace").strip()
         return str(message.get_payload()).strip()
+
+    def _handle_watchlist_command(self, body: str) -> str | None:
+        """Handle simple email commands for watchlist/category updates."""
+        line = body.strip().splitlines()[0].strip()
+        lowered = line.lower()
+        if lowered == "watchlist show":
+            data = self._read_watchlist()
+            return (
+                "Current StockBot watchlist\n\n"
+                f"Tickers: {', '.join(data.get('tickers', []))}\n\n"
+                f"Categories: {', '.join(data.get('categories', []))}"
+            )
+        if lowered.startswith("watchlist add "):
+            ticker = self._normalize_ticker(line[len("watchlist add "):])
+            return self._update_list("tickers", ticker, add=True)
+        if lowered.startswith("watchlist remove "):
+            ticker = self._normalize_ticker(line[len("watchlist remove "):])
+            return self._update_list("tickers", ticker, add=False)
+        if lowered.startswith("category add "):
+            category = line[len("category add "):].strip().lower()
+            return self._update_list("categories", category, add=True)
+        if lowered.startswith("category remove "):
+            category = line[len("category remove "):].strip().lower()
+            return self._update_list("categories", category, add=False)
+        return None
+
+    def _read_watchlist(self) -> dict:
+        """Read watchlist JSON safely."""
+        if not self.config.watchlist_path.exists():
+            return {"tickers": [], "categories": [], "rss_feeds": []}
+        with self.config.watchlist_path.open("r", encoding="utf-8") as file:
+            return json.load(file)
+
+    def _write_watchlist(self, data: dict) -> None:
+        """Write watchlist JSON with stable formatting."""
+        self.config.watchlist_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.config.watchlist_path.open("w", encoding="utf-8") as file:
+            json.dump(data, file, indent=2)
+            file.write("\n")
+
+    def _update_list(self, key: str, value: str, add: bool) -> str:
+        """Add or remove a watchlist item."""
+        if not value:
+            return "Command ignored: no value provided."
+        data = self._read_watchlist()
+        items = data.get(key, [])
+        normalized = []
+        seen = set()
+        for item in items:
+            current = self._normalize_ticker(item) if key == "tickers" else str(item).strip().lower()
+            if current and current not in seen:
+                seen.add(current)
+                normalized.append(current)
+        if add and value not in seen:
+            normalized.append(value)
+        if not add:
+            normalized = [item for item in normalized if item != value]
+        data[key] = normalized
+        self._write_watchlist(data)
+        action = "added to" if add else "removed from"
+        return f"{value} {action} StockBot {key}. Restart the app or wait for the next config reload to use changes."
+
+    def _normalize_ticker(self, value: str) -> str:
+        """Normalize ticker while preserving suffix/futures symbols."""
+        return value.strip().upper()

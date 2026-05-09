@@ -17,6 +17,7 @@
 - Added IPO monitoring with configurable IPO feeds, S-1 candidates, Stooq price checks, email alerts, and daily report output.
 - Added robust IPO calendar ingestion with Nasdaq API, StockAnalysis best-effort parsing, and manual CSV fallback.
 - Added diagnostics and health checks through `health_check.py` and `python main.py --health`.
+- Added price/volume confirmation, final signal scoring, alert performance tracking, email watchlist commands, and upgraded morning brief sections.
 
 ## Current Implemented Features
 
@@ -34,6 +35,9 @@
 - IPO watchlist rows with prediction summaries, scores, risks, and price checks.
 - IPO source quality tracking, dedupe by ticker/company/date, and missing price warnings in reports.
 - Health checks for env loading, email config, Ollama, SQLite, RSS, SEC, IPO sources, and runtime directories.
+- Final signal scoring with `model_confidence + source_score + price_volume_score - risk_penalty`.
+- Alert outcome tracking for 1h, 4h, 1d, and 5d horizons.
+- Email commands for showing/updating tickers and categories.
 - Continuous Windows-compatible main loop with Ctrl+C shutdown.
 
 ## How To Test Email Sending
@@ -101,6 +105,24 @@ python health_check.py
 python main.py --health
 ```
 
+## How To Test Signal Scoring
+
+```powershell
+python -c "from signal_scoring import build_price_confirmation, final_signal_score; s={'confidence':70,'action':'possible_buy','sentiment':'bullish','source':'SEC EDGAR','matched_symbol':'NVDA'}; q={'current_price':100,'opening_price':98,'percent_move':2.04,'volume':1000000,'provider':'test'}; c=build_price_confirmation(s,q); print(c); print(final_signal_score(s,c))"
+```
+
+## How To Test Watchlist Email Commands
+
+```powershell
+python -c "from config import load_config; from inbox_monitor import InboxMonitor; from ollama_client import OllamaClient; from email_client import EmailClient; c=load_config(); m=InboxMonitor(c, OllamaClient(c.ollama_url,c.ollama_model), EmailClient(c)); print(m._handle_watchlist_command('watchlist show'))"
+```
+
+## How To Test Performance Tracking
+
+```powershell
+python -c "from config import load_config; from database import initialize_database, create_signal_outcome_rows, get_due_signal_outcomes; c=load_config(); initialize_database(c.database_path); create_signal_outcome_rows(c.database_path, 1, 'NVDA', 100); print(get_due_signal_outcomes(c.database_path))"
+```
+
 Manual CSV ingestion:
 
 ```powershell
@@ -135,4 +157,4 @@ For the full monitor path, make sure Ollama is running and `ENABLE_IPO_MONITOR=t
 
 ## Next Recommended Step
 
-Add price/volume confirmation and signal scoring.
+Add broker-free portfolio/watchlist dashboard export.
