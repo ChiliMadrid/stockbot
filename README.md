@@ -170,6 +170,8 @@ $files = Get-ChildItem -Path . -Recurse -Filter *.py -File | Where-Object { $_.F
 python -m py_compile @files
 ```
 
+For a full MVP readiness pass, use [STABILITY_CHECKLIST.md](STABILITY_CHECKLIST.md). For setup on an older Windows PC, use [DEPLOYMENT.md](DEPLOYMENT.md).
+
 ## Signal Scoring And Performance
 
 StockBot can confirm signals with lightweight price/volume data, calculate a final score, and track alert outcomes.

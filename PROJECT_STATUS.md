@@ -23,6 +23,7 @@
 - Added optional local tray/status controls with pause/resume support.
 - Added dashboard auto-refresh and status display.
 - Added local backup/export utilities for SQLite, watchlist config, and reports.
+- Added final MVP stability checklist and old Windows PC deployment guide.
 
 ## Current Implemented Features
 
@@ -48,6 +49,7 @@
 - Optional tray controls with graceful console fallback when tray dependencies are unavailable.
 - File-based pause/resume control using `logs/stockbot_pause.flag`.
 - Scheduled and manual backups under `backups/YYYY-MM-DD/`.
+- MVP hardening docs: `STABILITY_CHECKLIST.md` and `DEPLOYMENT.md`.
 - Continuous Windows-compatible main loop with Ctrl+C shutdown.
 
 ## How To Test Email Sending
@@ -155,6 +157,16 @@ If tray dependencies are missing, the command opens a console fallback menu.
 python backup_manager.py
 ```
 
+## Final MVP Hardening Commands
+
+```powershell
+$files = Get-ChildItem -Path . -Recurse -Filter *.py -File | Where-Object { $_.FullName -notmatch '\\.git\\|\\.venv\\|\\logs\\|\\database\\|\\reports\\|\\backups\\' } | ForEach-Object { $_.FullName }
+python -m py_compile @files
+python health_check.py
+python dashboard_exporter.py
+python backup_manager.py
+```
+
 Manual CSV ingestion:
 
 ```powershell
@@ -191,4 +203,4 @@ For the full monitor path, make sure Ollama is running and `ENABLE_IPO_MONITOR=t
 
 ## Next Recommended Step
 
-Add optional local web dashboard server.
+Run 72-hour live stability test before adding features.

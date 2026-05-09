@@ -42,17 +42,33 @@ from utils import configure_logging, should_send_signal_alert
 
 def write_bot_status(config: AppConfig, status: str, message: str = "") -> None:
     """Write a small status file for the tray app and dashboard."""
+    updated_at = datetime.now().isoformat(timespec="seconds")
     payload = {
         "status": status,
         "message": message,
-        "updated_at": datetime.now().isoformat(timespec="seconds"),
+        "updated_at": updated_at,
         "paused": config.bot_pause_file.exists(),
     }
     try:
         config.bot_status_file.parent.mkdir(parents=True, exist_ok=True)
+        if config.bot_status_file.exists():
+            existing = json.loads(config.bot_status_file.read_text(encoding="utf-8"))
+            same_state = all(existing.get(key) == payload.get(key) for key in ("status", "message", "paused"))
+            if same_state and _seconds_since_status_update(existing.get("updated_at")) < 30:
+                return
         config.bot_status_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    except OSError:
+    except (OSError, json.JSONDecodeError):
         logging.getLogger(__name__).debug("Could not write bot status file", exc_info=True)
+
+
+def _seconds_since_status_update(updated_at: str | None) -> float:
+    """Return seconds since a status timestamp, or a large value when unknown."""
+    if not updated_at:
+        return 999999.0
+    try:
+        return (datetime.now() - datetime.fromisoformat(updated_at)).total_seconds()
+    except ValueError:
+        return 999999.0
 
 
 def is_monitoring_paused(config: AppConfig) -> bool:
@@ -398,7 +414,7 @@ def main() -> None:
     next_ipo_check = 0.0
     next_performance_check = 0.0
     next_dashboard_export = 0.0
-    next_backup_check = 0.0
+    next_backup_check = time.monotonic() + max(config.backup_interval_hours, 1) * 3600
 
     logger.info("StockBot running. Press Ctrl+C to stop.")
     write_bot_status(config, "running", "StockBot started")

@@ -5,10 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
-import sys
 import webbrowser
 from datetime import datetime
-from pathlib import Path
 
 from backup_manager import run_backup
 from config import AppConfig, load_config

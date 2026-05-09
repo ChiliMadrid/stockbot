@@ -165,14 +165,20 @@ def _check_ipo_sources(config) -> HealthResult:
 
 
 def _check_runtime_dirs(config) -> HealthResult:
-    dirs = [config.reports_dir, config.log_file.parent, config.database_path.parent]
+    dirs = [
+        config.reports_dir,
+        config.dashboard_dir,
+        config.log_file.parent,
+        config.database_path.parent,
+        config.backups_dir,
+    ]
     failures = []
     for directory in dirs:
         if not _dir_writable(directory):
             failures.append(str(directory))
     if failures:
         return HealthResult("FAIL", "runtime dirs", f"Not writable: {', '.join(failures)}")
-    return HealthResult("PASS", "runtime dirs", "reports, logs, and database directories are writable")
+    return HealthResult("PASS", "runtime dirs", "reports, dashboard, logs, database, and backups directories are writable")
 
 
 def _ollama_tags_url(generate_url: str) -> str:

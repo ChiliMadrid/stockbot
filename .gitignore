@@ -1,16 +1,25 @@
 .env
+.env.*
+!.env.example
 .venv/
 __pycache__/
 *.pyc
 
 database/*.sqlite
 database/*.sqlite3
+database/*.db
 logs/*.log
 logs/*.json
 logs/*.flag
+logs/*
 backups/
 reports/*.txt
 reports/*.md
+reports/**/*.txt
+reports/**/*.md
+reports/**/*.csv
+reports/**/*.html
+reports/**/*.json
 reports/sec_filings/*.txt
 reports/dashboard/*.csv
 reports/dashboard/*.html
